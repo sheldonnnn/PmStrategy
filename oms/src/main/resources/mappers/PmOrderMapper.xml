@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yourcompany.oms.mapper.PmOrderMapper">
+
+    <resultMap id="BaseResultMap" type="com.yourcompany.oms.entity.PmOrder">
+        <id column="ORDER_ID" property="orderId" />
+        <result column="EXCH_ORDER_ID" property="exchOrderId" />
+        <result column="STRATEGY_ORDER_ID" property="strategyOrderId" />
+        <result column="BYSUBESS_TYPE" property="businessType" /> <result column="SIDE" property="side" />
+        <result column="SYMBOL" property="symbol" />
+        <result column="CURRENCY" property="currency" />
+        <result column="ORD_TYPE" property="ordType" />
+        <result column="ORDER_QTY" property="orderQty" />
+        <result column="PRICE" property="price" />
+        <result column="AVG_PX" property="avgPx" />
+        <result column="CUM_QTY" property="cumQty" />
+        <result column="LEAVES_QTY" property="leavesQty" />
+        <result column="CANCELED_QTY" property="canceledQty" />
+        <result column="CUM_AMT" property="cumAmt" />
+        <result column="UNIT" property="unit" />
+        <result column="SETTLE_DATE" property="settleDate" />
+        <result column="STRATEGY_ID" property="strategyId" />
+        <result column="INSTANCE_ID" property="instanceId" />
+        <result column="USER_NAME" property="userName" />
+        <result column="TAG" property="tag" />
+        <result column="TIME_IN_FORCE" property="timeInForce" />
+        <result column="VENUE_ID" property="venueId" />
+        <result column="COUNTERPARTY_ID" property="counterpartyId" />
+        <result column="MARKET_SEGMENT_ID" property="marketSegmentId" />
+        <result column="SECURITY_TYPE" property="securityType" />
+        <result column="PRODUCT_TYPE" property="productType" />
+        <result column="MEMBER_ID" property="memberId" />
+        <result column="CLIENT_ID" property="clientId" />
+        <result column="INVENTORY_TYPE" property="inventoryType" />
+        <result column="DOMESTIC_TYPE" property="domesticType" />
+        <result column="OPEN_FLAG" property="openFlag" />
+        <result column="SH_FLAG" property="shFlag" />
+        <result column="ORDER_TIME" property="orderTime" />
+        <result column="ORDER_DATE" property="orderDate" />
+        <result column="STATUS" property="status" />
+        <result column="STATUS_MSG" property="statusMsg" />
+        <result column="EXTRA" property="extra" />
+        <result column="CREATED_TIME" property="createdTime" />
+        <result column="UPDATED_TIME" property="updatedTime" />
+    </resultMap>
+
+    <insert id="insertOrder" parameterType="com.yourcompany.oms.entity.PmOrder">
+        INSERT INTO PM_ORDER (
+        ORDER_ID, STRATEGY_ORDER_ID, SIDE, SYMBOL, CURRENCY, ORD_TYPE,
+        ORDER_QTY, PRICE, LEAVES_QTY, UNIT, BYSUBESS_TYPE, STRATEGY_ID,
+        VENUE_ID, COUNTERPARTY_ID, ORDER_TIME, ORDER_DATE, STATUS, CREATED_TIME, UPDATED_TIME
+        ) VALUES (
+        #{orderId}, #{strategyOrderId}, #{side}, #{symbol}, #{currency}, #{ordType},
+        #{orderQty}, #{price}, #{leavesQty}, #{unit}, #{businessType}, #{strategyId},
+        #{venueId}, #{counterpartyId}, #{orderTime}, #{orderDate}, #{status},
+        #{createdTime}, #{updatedTime}
+        )
+    </insert>
+
+    <select id="selectByOrderId" resultMap="BaseResultMap">
+        SELECT * FROM PM_ORDER WHERE ORDER_ID = #{orderId}
+    </select>
+
+    <update id="updateOrderSelective" parameterType="com.yourcompany.oms.entity.PmOrder">
+        UPDATE PM_ORDER
+        <set>
+            <if test="exchOrderId != null">EXCH_ORDER_ID = #{exchOrderId},</if>
+            <if test="avgPx != null">AVG_PX = #{avgPx},</if>
+            <if test="cumQty != null">CUM_QTY = #{cumQty},</if>
+            <if test="leavesQty != null">LEAVES_QTY = #{leavesQty},</if>
+            <if test="canceledQty != null">CANCELED_QTY = #{canceledQty},</if>
+            <if test="cumAmt != null">CUM_AMT = #{cumAmt},</if>
+            <if test="status != null">STATUS = #{status},</if>
+            <if test="statusMsg != null">STATUS_MSG = #{statusMsg},</if>
+            <if test="updatedTime != null">UPDATED_TIME = #{updatedTime},</if>
+        </set>
+        WHERE ORDER_ID = #{orderId}
+    </update>
+
+</mapper>

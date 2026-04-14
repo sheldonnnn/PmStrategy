@@ -8,8 +8,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PreDestroy;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @Slf4j
@@ -63,6 +65,44 @@ public class HedgeStrategyManager {
 //            runningInstances.remove(instanceId);
             log.info("Strategy {} stopped.", instanceId);
         }
+    }
+
+    /**
+     * 核心逻辑：优雅停机机制
+     * 当 Spring Boot 服务停止（如触发 kill 命令）时，自动执行此方法
+     */
+    @PreDestroy
+    public void stopAllStrategiesGracefully() {
+        log.warn("========== 系统准备停止，开始优雅关闭所有积存金平盘策略 ==========");
+
+        // 1. 向所有运行中的策略发送停止信号（修改它们的 volatile 标志位）
+        if (!runningInstances.isEmpty()) {
+            for (AbstractHedgeStrategy strategy : runningInstances.values()) {
+                strategy.stop();
+            }
+            log.info("已向 {} 个正在运行的策略发送了退出指令.", runningInstances.size());
+        }
+
+        // 2. 关闭线程池（不再接受新任务）
+        strategyThreadPool.shutdown();
+
+        try {
+            // 3. 等待策略线程自行结束，给予它们 10 秒的清理时间 (比如去执行撤单操作)
+            log.info("等待策略线程安全退出，超时时间为 10 秒...");
+            if (!strategyThreadPool.awaitTermination(10, TimeUnit.SECONDS)) {
+                // 如果 10 秒后还有策略卡死（比如在等某个僵死的网络 I/O），则执行暴力中断
+                log.error("超时！部分策略未能安全退出，执行强行中断 (shutdownNow)！");
+                strategyThreadPool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            log.error("等待线程池关闭时被意外打断，强制退出！", e);
+            strategyThreadPool.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
+        // 4. 清理内存字典
+        runningInstances.clear();
+        log.warn("========== 所有积存金平盘策略已停止完毕，允许系统主进程退出 ==========");
     }
 
     public void dispatchOrderEvent(OrderEvent event) {

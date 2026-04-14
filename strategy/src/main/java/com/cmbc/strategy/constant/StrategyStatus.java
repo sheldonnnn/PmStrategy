@@ -51,9 +51,9 @@ public enum StrategyStatus {
         private final int code;
         private final String description;
 
-        StrategyStatus(int i, String 已停止) {
+        StrategyStatus(int i, String description) {
                 this.code = i;
-                this.description = 已停止;
+                this.description = description;
         }
 
         /**

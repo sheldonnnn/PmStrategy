@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yourcompany.oms.mapper.PmTradeMapper">
+
+    <resultMap id="BaseResultMap" type="com.yourcompany.oms.entity.PmTrade">
+        <id column="EXEC_ID" property="execId" />
+        <result column="ORDER_ID" property="orderId" />
+        <result column="EXCH_ORDER_ID" property="exchOrderId" />
+        <result column="BYSUBESS_TYPE" property="businessType" /> <result column="SIDE" property="side" />
+        <result column="SYMBOL" property="symbol" />
+        <result column="LAST_QTY" property="lastQty" />
+        <result column="LAST_PX" property="lastPx" />
+        <result column="LAST_AMT" property="lastAmt" />
+        <result column="MATCH_TIME" property="matchTime" />
+        <result column="MATCH_DATE" property="matchDate" />
+        <result column="STATUS" property="status" />
+    </resultMap>
+
+    <insert id="insertTrade" parameterType="com.yourcompany.oms.entity.PmTrade">
+        INSERT INTO PM_TRADE (
+        EXEC_ID, ORDER_ID, EXCH_ORDER_ID, STRATEGY_ORDER_ID, SIDE, SYMBOL,
+        CURRENCY, ORD_TYPE, LAST_QTY, LAST_PX, LAST_AMT, BYSUBESS_TYPE,
+        COUNTERPARTY, EXCH_ID, MATCH_TIME, MATCH_DATE, STATUS,
+        CREATED_TIME, UPDATED_TIME
+        ) VALUES (
+        #{execId}, #{orderId}, #{exchOrderId}, #{strategyOrderId}, #{side}, #{symbol},
+        #{currency}, #{ordType}, #{lastQty}, #{lastPx}, #{lastAmt}, #{businessType},
+        #{counterparty}, #{exchId}, #{matchTime}, #{matchDate}, #{status},
+        #{createdTime}, #{updatedTime}
+        )
+    </insert>
+
+    <select id="selectTradesByOrderId" resultMap="BaseResultMap">
+        SELECT * FROM PM_TRADE
+        WHERE ORDER_ID = #{orderId}
+        ORDER BY MATCH_TIME ASC
+    </select>
+
+</mapper>
