@@ -1,4 +1,4 @@
-package com.cmbc.oms.cash;
+package com.cmbc.oms.domain.exposure.cash;
 
 /**
  * 头寸组 (Folder) 路由接口。

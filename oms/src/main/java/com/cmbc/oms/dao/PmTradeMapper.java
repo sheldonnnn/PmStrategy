@@ -1,6 +1,6 @@
 package com.cmbc.oms.dao;
 
-import com.cmbc.oms.domain.entity.PmTrade;
+import com.cmbc.oms.domain.order.entity.PmTrade;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import java.util.List;

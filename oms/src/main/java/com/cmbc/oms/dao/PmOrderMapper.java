@@ -1,6 +1,6 @@
 package com.cmbc.oms.dao;
 
-import com.cmbc.oms.domain.entity.PmOrder;
+import com.cmbc.oms.domain.order.entity.PmOrder;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 

@@ -1,4 +1,4 @@
-package com.cmbc.oms.domain.entity;
+package com.cmbc.oms.domain.order.entity;
 
 import lombok.Data;
 import java.math.BigDecimal;

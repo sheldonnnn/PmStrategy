@@ -1,4 +1,4 @@
-package com.cmbc.oms.cash;
+package com.cmbc.oms.domain.exposure.cash;
 
 import lombok.Getter;
 
