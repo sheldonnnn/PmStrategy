@@ -1,11 +1,10 @@
-package com.cmbc.oms.domain.exposure.cash;
+package com.cmbc.oms.domain.exposure.model;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 
 import lombok.Data;
-import lombok.Getter;
 
 @Data
 public class PositionSnapshot {

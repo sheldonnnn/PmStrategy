@@ -1,4 +1,6 @@
-package com.cmbc.oms.domain.exposure.cash;
+package com.cmbc.oms.domain.exposure.service;
+
+import com.cmbc.oms.domain.order.model.OrderUpdate;
 
 /**
  * 头寸组 (Folder) 路由接口。

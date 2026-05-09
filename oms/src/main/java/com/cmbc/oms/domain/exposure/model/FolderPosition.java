@@ -1,12 +1,10 @@
-package com.cmbc.oms.domain.exposure.cash;
+package com.cmbc.oms.domain.exposure.model;
 
 import lombok.Data;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 /**
  * 资金头寸组 (Folder) 实体。

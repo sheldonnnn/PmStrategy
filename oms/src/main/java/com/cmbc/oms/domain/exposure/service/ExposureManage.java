@@ -4,16 +4,17 @@ import com.cmbc.mds.distribution.PloyPrices;
 import com.cmbc.mds.distribution.PloyPricesHandler;
 import com.cmbc.oms.dao.PositionBalanceMapper;
 import com.cmbc.oms.domain.basic.BasicParamCacheManager;
-import com.cmbc.oms.domain.exposure.cash.*;
+import com.cmbc.oms.domain.exposure.model.FolderPosition;
+import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
 import com.cmbc.oms.domain.order.model.ContractInfoBasic;
 import com.cmbc.oms.domain.order.model.ExecutionReport;
 import com.cmbc.oms.domain.order.model.NewOrder;
+import com.cmbc.oms.domain.order.model.OrderUpdate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,15 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
             private final ConcurrentHashMap<String, Boolean> subscribedSymbols = new ConcurrentHashMap<>();
         // 最新行情快照池
         private final ConcurrentHashMap<String, BigDecimal> marketPrices = new ConcurrentHashMap<>();
+
+        // 使用 LinkedHashMap 实现的轻量级 LRU 缓存，最多保留最近的 10000 条回报记录
+        private final Map<String, Boolean> processedExecCache = new java.util.LinkedHashMap<String, Boolean>(10000, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
+                return size() > 10000; // 超过 1 万条自动丢弃最旧的
+            }
+        };
+
         @Autowired
         private List<IPositionFolderRouter> folderRouter;
         private Map<String, ContractInfoBasic> contractInfoCache;
@@ -74,6 +84,21 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
                 }
             }
             return "DEFAULT";
+        }
+
+        private String determineFolder(ExecutionReport event) {
+            OrderUpdate update = new OrderUpdate();
+            update.setSymbol(event.getSymbol());
+            update.setSide(event.getSide());
+            update.setBusinessType(event.getBusinessType());
+            return determineFolder(update);
+        }
+
+        private String determineFolder(NewOrder event) {
+            OrderUpdate update = new OrderUpdate();
+            update.setSymbol(event.getSymbol());
+            update.setSide(event.getSide());
+            return determineFolder(update);
         }
 
     private void subscribeIfNeeded(String symbol) {
@@ -154,7 +179,7 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
          * 策略发单前调用，增加冻结量 (防超买超卖)
          */
         public void freezePosition(NewOrder newOrder) {
-            String folderId = "MgapHedge";
+            String folderId = determineFolder(newOrder);
             FolderPosition folderPosition = positionCache.computeIfAbsent(folderId, k -> new FolderPosition(folderId));
             PositionSnapshot snapshot = folderPosition.getOrCreateSnapshot(newOrder.getSymbol(), contractInfoCache.get(newOrder.getSymbol()).getUnit(),newOrder.getDomesticType());
 
@@ -173,6 +198,22 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
          */
         public void onExecutionReport(ExecutionReport executionReport) {
             log.info("处理订单事件,订单状态: {},{}", executionReport.getStatus(), executionReport);
+
+            // --- 1. 内存级轻量防重处理 ---
+            // 构造防重 Key：优先使用 execId，若没有则用 orderId + status
+            String dedupKey = executionReport.getExecId() != null 
+                    ? "EXEC_" + executionReport.getExecId() 
+                    : "ORD_" + executionReport.getOrderId() + "_" + executionReport.getStatus();
+
+            synchronized (processedExecCache) {
+                if (processedExecCache.containsKey(dedupKey)) {
+                    log.warn("检测到重复的订单回报推送，直接丢弃避免头寸双重计算! Key: {}", dedupKey);
+                    return;
+                }
+                processedExecCache.put(dedupKey, Boolean.TRUE);
+            }
+
+            // 【修复】统一路由：保持与 freezePosition 相同的逻辑，避免冻结和解冻路由不一致导致冻结泄漏
             String folderId = determineFolder(executionReport);
             String symbol = executionReport.getSymbol(); // 假设Event里有此字段
 
@@ -234,7 +275,6 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
             }
 
             String symbol = ployPrices.getSymbol();
-            String folderId = "MgapHedge";
             BigDecimal basePrice;
 
             if (ployPrices.getMidPx() != null) {
@@ -250,13 +290,13 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
 
             mktPrices.put(ployPrices.getSymbol(), basePrice);
 
-            FolderPosition folderPosition = positionCache.get(folderId);
-            if (folderPosition != null) {
+            // 行情应广播更新所有包含该合约的头寸组
+            for (FolderPosition folderPosition : positionCache.values()) {
                 PositionSnapshot snapshot = folderPosition.getSnapshot(symbol);
                 if (snapshot != null) {
-                    snapshot.setMktPrice(ployPrices.getMidPx());
+                    snapshot.setMktPrice(basePrice);
                     snapshot.setDepthUpdateTime(LocalDateTime.now());
-                    snapshot.calFloatPnl(ployPrices.getMidPx());
+                    snapshot.calFloatPnl(basePrice);
                 }
             }
 

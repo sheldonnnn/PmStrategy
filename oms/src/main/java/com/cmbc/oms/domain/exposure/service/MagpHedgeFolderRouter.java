@@ -1,5 +1,6 @@
-package com.cmbc.oms.domain.exposure.cash;
+package com.cmbc.oms.domain.exposure.service;
 
+import com.cmbc.oms.domain.order.model.OrderUpdate;
 import org.springframework.stereotype.Component;
 
 /**

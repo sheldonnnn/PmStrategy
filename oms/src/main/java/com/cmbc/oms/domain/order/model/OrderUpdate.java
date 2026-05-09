@@ -1,4 +1,4 @@
-package com.cmbc.oms.domain.exposure.cash;
+package com.cmbc.oms.domain.order.model;
 
 import lombok.Data;
 
