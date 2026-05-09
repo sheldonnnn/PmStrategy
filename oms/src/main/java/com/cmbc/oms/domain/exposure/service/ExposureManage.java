@@ -19,6 +19,11 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import javax.annotation.PreDestroy;
+import com.cmbc.oms.domain.exposure.entity.PositionBalanceEntity;
+
 import org.springframework.beans.factory.annotation.Autowired;
 
 @Slf4j
@@ -44,7 +49,7 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
     
     
         // 订阅防重池
-            private final ConcurrentHashMap<String, Boolean> subscribedSymbols = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, Boolean> subscribedSymbols = new ConcurrentHashMap<>();
         // 最新行情快照池
         private final ConcurrentHashMap<String, BigDecimal> marketPrices = new ConcurrentHashMap<>();
 
@@ -55,6 +60,20 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
                 return size() > 10000; // 超过 1 万条自动丢弃最旧的
             }
         };
+
+        // 单线程异步落库执行器：保证落库按时间顺序执行，避免数据库并发锁冲突，也不阻塞行情/订单线程
+        private final ExecutorService persistExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "Position-Persist-Thread");
+            t.setDaemon(true);
+            return t;
+        });
+
+        @PreDestroy
+        public void destroy() {
+            if (persistExecutor != null) {
+                persistExecutor.shutdown();
+            }
+        }
 
         @Autowired
         private List<IPositionFolderRouter> folderRouter;
@@ -84,21 +103,6 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
                 }
             }
             return "DEFAULT";
-        }
-
-        private String determineFolder(ExecutionReport event) {
-            OrderUpdate update = new OrderUpdate();
-            update.setSymbol(event.getSymbol());
-            update.setSide(event.getSide());
-            update.setBusinessType(event.getBusinessType());
-            return determineFolder(update);
-        }
-
-        private String determineFolder(NewOrder event) {
-            OrderUpdate update = new OrderUpdate();
-            update.setSymbol(event.getSymbol());
-            update.setSide(event.getSide());
-            return determineFolder(update);
         }
 
     private void subscribeIfNeeded(String symbol) {
@@ -134,7 +138,7 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
          * O(1) 极速查询某个头组下所有合约的【汇总大盘】头寸
          */
         public PositionSnapshot getTotalPosition(String folderId) {
-            FolderPosition folderPosition = positionCache.computeIfAbsent(folderId,k->new FolderPosition());
+            FolderPosition folderPosition = positionCache.computeIfAbsent(folderId, k -> new FolderPosition(folderId));
             return folderPosition.getTotalPosition();
         }
 
@@ -142,35 +146,7 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
          * O(1) 极速查询可用头寸，返回不可变对象
          */
         public FolderPosition getFolderPosition(String folderId) {
-            FolderPosition folderPosition = positionCache.get(folderId);
-//            if (folderPosition == null) {
-//                return new ReadOnlyPosition(folderId, symbol,
-//                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-//                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-//                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
-//            }
-//
-//            PositionSnapshot snapshot = folderPosition.getSnapshot(symbol);
-//            if (snapshot == null) {
-//                return new ReadOnlyPosition(folderId, symbol,
-//                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-//                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-//                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
-//            }
-//
-//            // 使用 synchronized 确保在此瞬间拷贝时不发生只拷贝了一半（比如释放了冻结还没加持仓）的中间态
-//            synchronized (snapshot) {
-//                return new ReadOnlyPosition(
-//                        folderId, symbol,
-//                        snapshot.getLongQty(), snapshot.getShortQty(),
-//                        snapshot.getFrozenLongQty(), snapshot.getFrozenShortQty(),
-//                        snapshot.getLongWeight(), snapshot.getShortWeight(),
-//                        snapshot.getLongAmount(), snapshot.getShortAmount(),
-//                        snapshot.getFrozenLongWeight(), snapshot.getFrozenShortWeight(),
-//                        snapshot.getFrozenLongAmount(), snapshot.getFrozenShortAmount()
-//                );
-//            }
-            return folderPosition;
+            return positionCache.get(folderId);
         }
 
         // ================== 2. 冻结管理 (事前) ==================
@@ -258,9 +234,38 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
         }
 
         private void persistPositionChangesAsync(PositionSnapshot snapshot){
+            if (snapshot == null) return;
 
+            // 1. 拷贝当前内存切片：必须在 synchronized 块内获取瞬时快照状态
+            // 避免提交到队列后，在等待落库的这段时间数据被后续行情/成交修改
+            PositionBalanceEntity entity = new PositionBalanceEntity();
+            synchronized (snapshot) {
+                entity.setPositionId(snapshot.getPositionId());
+                entity.setFolderId(snapshot.getFolderId());
+                entity.setSymbol(snapshot.getSymbol());
+                entity.setLongQty(snapshot.getLongQty());
+                entity.setShortQty(snapshot.getShortQty());
+                entity.setLongWeight(snapshot.getLongWeight());
+                entity.setShortWeight(snapshot.getShortWeight());
+                entity.setLongAmount(snapshot.getLongAmount());
+                entity.setShortAmount(snapshot.getShortAmount());
+                entity.setUpdateTime(snapshot.getUpdateTime());
+                entity.setCreateTime(snapshot.getCreateTime());
+                entity.setDomesticType(snapshot.getDomesticType());
+                entity.setUnit(snapshot.getUnit());
+            }
 
-
+            // 2. 扔给单线程执行器异步排队落库
+            persistExecutor.submit(() -> {
+                try {
+                    // 调用持久化层执行 UPSERT 操作（根据 positionId 存在则更新，不存在则插入）
+                    balanceMapper.saveOrUpdate(entity);
+                    // log.debug("异步落库头寸成功: {}", entity.getPositionId()); // 可作为调试用
+                } catch (Exception e) {
+                    log.error("异步落库头寸失败! PositionId: {}", entity.getPositionId(), e);
+                    // 实盘如果持久化报错，系统通常依靠重启重建内存状态，或者对接告警系统人工介入
+                }
+            });
         }
 
     public void onPloyPrices(PloyPrices ployPrices) {
@@ -290,13 +295,11 @@ public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
 
             mktPrices.put(ployPrices.getSymbol(), basePrice);
 
-            // 行情应广播更新所有包含该合约的头寸组
+            // 恢复主动推模型：由于行情频次不高（十几笔/秒），直接在行情线程中更新计算，保证查询接口的极致性能
             for (FolderPosition folderPosition : positionCache.values()) {
                 PositionSnapshot snapshot = folderPosition.getSnapshot(symbol);
                 if (snapshot != null) {
-                    snapshot.setMktPrice(basePrice);
-                    snapshot.setDepthUpdateTime(LocalDateTime.now());
-                    snapshot.calFloatPnl(basePrice);
+                    snapshot.updateMarketData(basePrice);
                 }
             }
 

@@ -111,7 +111,7 @@ public class PositionSnapshot {
             this.shortQty = this.shortQty.add(dealQty);
             BigDecimal addWeight = calWeight(dealQty);
             this.shortWeight = this.shortWeight.add(addWeight);
-            this.shortAmount = this.shortWeight.add(dealAmount);
+            this.shortAmount = this.shortAmount.add(dealAmount); // 【修复】之前写成了 shortWeight.add
             this.updateTime = LocalDateTime.now();
         }
 
@@ -145,7 +145,7 @@ public class PositionSnapshot {
         private void releaseFrozenShort(BigDecimal unfreezeQty) {
             if (this.frozenShortQty.compareTo(BigDecimal.ZERO) > 0 && unfreezeQty.compareTo(BigDecimal.ZERO) > 0) {
                 BigDecimal ratio = unfreezeQty.divide(this.frozenShortQty, 8, java.math.RoundingMode.HALF_UP);
-                this.frozenShortWffeight = this.frozenShortWeight.subtract(this.frozenShortWeight.multiply(ratio)).max(BigDecimal.ZERO);
+                this.frozenShortWeight = this.frozenShortWeight.subtract(this.frozenShortWeight.multiply(ratio)).max(BigDecimal.ZERO); // 【修复】原代码有拼写错误 frozenShortWffeight
                 this.frozenShortAmount = this.frozenShortAmount.subtract(this.frozenShortAmount.multiply(ratio)).max(BigDecimal.ZERO);
             } else {
                 this.frozenShortWeight = BigDecimal.ZERO;
@@ -184,6 +184,18 @@ public class PositionSnapshot {
         }
 
         this.floatPnl = totalPnL;
+    }
+
+    /**
+     * 【新增】线程安全的行情更新入口
+     */
+    public synchronized void updateMarketData(BigDecimal currentMidPx) {
+        if (currentMidPx == null) {
+            return;
+        }
+        this.mktPrice = currentMidPx;
+        this.depthUpdateTime = LocalDateTime.now();
+        recalculatePnL(currentMidPx);
     }
 
 
