@@ -39,7 +39,6 @@ public class FolderPosition {
     public void putSnapShot(PositionSnapshot snapShot){
         symbolPositions.put(snapShot.getSymbol(),snapShot);
     }
-/
 
     /**
      * 汇总当前资金池（头组）下所有衍生合约总量的头寸。

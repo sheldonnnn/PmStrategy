@@ -1,12 +1,13 @@
 package com.cmbc.strategy.integration;
 
+import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
+
 import java.math.BigDecimal;
 
 public interface IPositionService {
 
-    public BigDecimal getClientPosition(); // 查积存金头寸
-    public BigDecimal getHedgedPosition(); // 查已平盘头寸
-
-    public BigDecimal getActiveExposure();
+    public StrategyPosition getMgapPositionSummary(); // 查积存金头寸
+    public PositionSnapshot getFolderPositionSummary(String folderId); // 查已平盘头寸
 
 }

@@ -1,21 +1,36 @@
 package com.cmbc.strategy.domain.dto;
 
+package com.cmbc.strategy.domain.dto;
+
 import lombok.Data;
+import java.util.Map;
 
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.NotNull;
-
+/**
+ * 对冲策略请求对象
+ */
 @Data
 public class HedgeStrategyRequest {
 
-    @NotBlank(message = "策略实例ID不能为空")
-    private String instanceId;   // 此次运行的唯一Trace ID (如 UUID)
+    private String strategyId;      // 此次运行的唯一Trace ID (如 UUID)
 
-    @NotNull(message = "基础配置ID不能为空")
-    private String baseConfigId;   // 对应 GOLD_STRATEGY_BASE_CONFIG 表主键
+    private String symbolConfigId;  // 对应 GOLD_STRATEGY_TIME_RULES 表的关联Group ID
 
-    @NotNull(message = "合约规则组ID不能为空")
-    private String symbolConfigId; // 对应 GOLD_STRATEGY_TIME_RULES 表的关联Group ID
+    private String instanceId;
 
+    private String account;         // 外资行账户
+
+    private String userName;
+
+    private String traderNo;
+
+    private String tagCode;
+
+    private String tagName;
+
+    private String exchId;          // 交易源
+
+    private String counterParty;    // 交易对手方
+
+    private Map<String, ClientMemberInfo> clientMemberInfo;
 
 }

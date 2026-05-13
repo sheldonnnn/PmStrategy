@@ -1,84 +1,104 @@
 package com.cmbc.strategy.service.instance;
 
-
+import com.cmbc.oms.controller.dto.StrategyOrder;
+import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
 import com.cmbc.strategy.domain.model.market.PloyPrices;
-import com.cmbc.strategy.domain.model.order.OrderRequest;
-import com.cmbc.strategy.integration.IMarketDataService;
-import com.cmbc.strategy.integration.IOrderService;
-import com.cmbc.strategy.integration.IPositionService;
-import com.cmbc.strategy.domain.model.market.Depth;
-import com.cmbc.strategy.domain.model.order.NewOrder;
-import com.cmbc.strategy.domain.model.config.StrategyConfig;
+import com.cmbc.strategy.domain.model.market.SubscribeRequest;
+import com.cmbc.strategy.service.StrategyContext;
+import com.cmbc.strategy.util.OrderUtil;
 import lombok.extern.slf4j.Slf4j;
-
+import javax.annotation.Resource;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ScheduledFuture;
 
+/**
+ * BaseStrategy 抽象基类
+ * 泛型 T 需继承 StrategyConfig
+ */
 @Slf4j
 public abstract class BaseStrategy<T extends StrategyConfig> implements IStrategy {
 
-    protected IMarketDataService marketDataService;
-    protected IOrderService orderService;
-    protected IPositionService positionService;
+    @Resource
+    protected StrategySubscriptionController strategySubscriptionController;
+
+    protected final StrategyContext strategyContext;
     protected final String instanceId;
     protected final T config; // 泛型配置
 
-
-
     // 状态管理
-
-    public BaseStrategy(T config,String instanceId) {
+    public BaseStrategy(T config, String instanceId, StrategyContext strategyContext) {
         this.instanceId = instanceId;
         this.config = config;
+        this.strategyContext = strategyContext;
     }
 
-    // ================== 通用能力封装 (API for Sub-classes) ==================
+    // ============================== 通用能力封装 (API for Sub-classes) ==============================
 
     /**
-     * SDK能力: 发送订单
+     * 调度任务
      */
-    protected void newOrderSingle(NewOrder request) {
-//        if (!status.get().canTrade()) {
-//            log.warn("[{}] Strategy not running, reject order.");
-//            return;
-//        }
-//        orderService().sendOrder(request);
+    protected ScheduledFuture<?> schedule(Runnable task, long delay) {
+        if (strategyContext.getTaskScheduler() == null) {
+            log.error("TaskScheduler is not initialized.");
+            return null;
+        }
+        return strategyContext.getTaskScheduler().scheduleWithFixedDelay(task, Duration.ofMillis(delay));
     }
 
-    protected void newOrderVwap(OrderRequest request) {
-//        if (!status.get().canTrade()) {
-//            log.warn("[{}] Strategy not running, reject order.");
-//            return;
-//        }
-//        orderService().sendOrder(request);
+    public String getInstanceId() {
+        return instanceId;
     }
 
     /**
-     * SDK能力: 撤销订单
+     * SDK能力：发送订单
      */
-//    protected void cancelOrder(String orderId) {
-//        orderService().cancelOrder(orderId);
-//    }
+    protected void sendStrategyOrder(StrategyOrder strategyOrder) {
+        if (strategyOrder.getOrderId() == null) {
+            strategyOrder.setOrderId(OrderUtil.generateStrategyOrderId());
+        }
+        strategyOrder.setInstanceId(instanceId);
+        strategyOrder.setOrderType("LIMIT"); //todo
+        // 此处对应图片底部逻辑，调用相关服务发送订单
+        strategyContext.getOmsService().newOrder(strategyOrder);
+    }
 
-    /**
-     * SDK能力: 撤销本策略所有活跃订单  todo
-     */
     protected void cancelAllOrders() {
-//        orderService().cancelAll(instanceId);
+        try{
+            strategyContext.getOmsService().cancelOrderByStrategyId(instanceId);
+        }catch (Exception e){
+            log.error("cancelAllOrders error: {}", e.getMessage());
+        }
+
+    }
+    /**
+     * SDK能力：订阅行情
+     */
+    protected void subscribe(List<SubscribeRequest> subscribeReq, String userId) {
+        strategyContext.getMarketDataService().subscribe(subscribeReq, instanceId, userId);
     }
 
-    /**
-     * SDK能力: 订阅行情
-     */
-    protected void subscribe(List<String> symbols) {
-//        marketDataService().subscribe(symbols);
+    protected PloyPrices getOnshorePloyPrice(String symbol) {
+        PloyPrices ployPrices = strategyContext.getMarketDataService().getPloyPrice(symbol, "DIMPLE", "DIMPLE");
+        return ployPrices;
     }
-    protected PloyPrices getPloyDepth(String symbol, List<String> sources) {
-        return new PloyPrices();
+
+    protected PloyPrices getOffshorePloyPrice(String symbol, String exchIds, String counterParties) {
+        PloyPrices ployPrices = strategyContext.getMarketDataService().getPloyPrice(symbol, exchIds, counterParties);
+        return ployPrices;
     }
-    //todo
+
 //    protected Depth getMarketDataSnapshot(String symbol, List<String> sources) {
+//        // 图片显示此处返回 new Depth() 或类似逻辑
 //        return new Depth();
 //    }
 
+    protected StrategyPosition getClientPosition() {
+        return strategyContext.getPositionService().getMgapPositionSummary();
+    }
 
+    protected PositionSnapshot getFolderPosition(String folderId) {
+        return strategyContext.getPositionService().getFolderPositionSummary(folderId);
+    }
 }

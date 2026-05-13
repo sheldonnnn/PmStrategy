@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.cmbc.mds.distribution.PloyPrices;
+import com.cmbc.mds.service.MergeQuotesCacheService;
 import com.cmbc.oms.constant.BusinessConstant;
 import com.cmbc.oms.domain.basic.BasicParamCacheManager;
 import com.cmbc.oms.domain.exposure.model.FolderPosition;
@@ -269,8 +270,6 @@ public class MgapClientPositionManage {
 
                     info.setNetAmount(positionSnapshot.getNetAmount()); // 平盘金额
                     info.setMktPrice(positionSnapshot.getMktPrice());
-                    info.setBidPrice(positionSnapshot.getLongQty()); // 最新行情价
-                    info.setOfrPrice(positionSnapshot.getShortQty()); // 最新行情卖出价
                     info.setAvgPrice(positionSnapshot.getNetAvgPrice()); // 成本价
                     info.setProfitLoss(positionSnapshot.getFloatPnl()); // 浮动盈亏
 
@@ -285,20 +284,46 @@ public class MgapClientPositionManage {
                         netPositionSummary = netPositionSummary.add(info.getNetPosition());
                         profitLossSummary = profitLossSummary.add(info.getProfitLoss());
 
-                        // 针对交易所特定逻辑处理
+                        // 判断是否为上海期货交易所
                         if (contractInfoBasic.getExchCode().equals(BusinessConstant.SH_FUTURES_EXCHANGE)) {
-                            // 计算基差盈亏逻辑...
+                            PloyPrices ployPrice = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol(positionSnapshot.getSymbol());
+                            PloyPrices basePrice = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol("Au(T+D)");
+
+                            if (ployPrice != null && basePrice != null && ployPrice.getMidPx() != null && basePrice.getMidPx() != null) {
+                                // 计算基准价差：(当前价 - Au(T+D)价)，保留2位小数，四舍五入
+                                info.setBaseSpread(ployPrice.getMidPx().subtract(basePrice.getMidPx()).setScale(2, BigDecimal.ROUND_HALF_UP));
+                                // 计算价差盈亏：价差 * 净头寸，保留2位小数
+                                info.setSpreadPL(info.getBaseSpread().multiply(info.getNetPosition()).setScale(2, BigDecimal.ROUND_HALF_UP));
+                            }
+                            }
+                        } else {
+                            // 非内盘/期货的处理逻辑
+                            info.setNetPosition(positionSnapshot.getNetQty());
+                            // 净头寸换算（可能涉及盎司到克的转换）
+                            info.getNetPosition().multiply(BusinessConstant.OUNCE_GRAM); // 净敞口头寸
+
+                            netPositionSummary = netPositionSummary.add(info.getNetPosition());
+
+                            // 获取汇率或基准价进行折算
+                            if (mergeQuotesCacheService.getSystemInitPloyPriceBySymbol(fxSymbol) != null) {
+                                // TODO 1.CNH or CNY? 2.处理逻辑补充
+                                BigDecimal fxRate = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol(fxSymbol).getMidPx();
+
+                                // 净成交金额和盈亏按汇率折算
+                                netDealAmountSummary = netDealAmountSummary.add(info.getNetAmount().multiply(fxRate)).setScale(2, BigDecimal.ROUND_HALF_UP);
+                                profitLossSummary = profitLossSummary.add(info.getProfitLoss().multiply(fxRate)).setScale(2, BigDecimal.ROUND_HALF_UP);
+
+//                                logger.info("positionSnapshot:{}", JSONObject.toJSONString(positionSnapshot));
+//                                logger.info("outer symbol:{}, qty:{}, amt:{}, netPositionSummary:{}, fxRate:{}",
+                                        positionSnapshot.getSymbol(), positionSnapshot.getNetQty(), info.getNetAmount(), netPositionSummary, fxRate);
+
+                                positionSummary.setFxRate(fxRate);
+                            }
                         }
-                    } else {
-                        info.setNetPosition(positionSnapshot.getNetQty());
-                        // 境外头寸转换
-                        netPositionSummary = netPositionSummary.add(info.getNetPosition().multiply(BusinessConstant.OUNCE_GRAM));
-                        // 汇率转换处理...
-                    }
                     hedgedPositionList.add(info);
+                    }
                 }
             }
-        }
 
         positionSummary.setProfitAndLoss(profitLossSummary);
         positionSummary.setNetPosition(netPositionSummary);

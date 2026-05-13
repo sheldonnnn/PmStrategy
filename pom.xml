@@ -15,8 +15,8 @@
 
     <parent>
         <groupId>org.springframework.boot</groupId>
-        <version>2.6.4</version>
         <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.6.4</version>
     </parent>
 
     <properties>

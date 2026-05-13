@@ -1,4 +1,4 @@
-package com.cmbc.strategy.service;
+package com.cmbc.strategy.service.hedge;
 
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import org.springframework.stereotype.Component;

@@ -83,5 +83,7 @@ public class SymbolTimeSlice {
         private String fxSymbol;
 
         private Integer unit;
+        private String groupId;
+        private String exchCode;
 
 }

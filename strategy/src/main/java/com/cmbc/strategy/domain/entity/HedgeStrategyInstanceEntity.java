@@ -1,92 +1,96 @@
 package com.cmbc.strategy.domain.entity;
 
+import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
+import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import lombok.Data;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.util.CollectionUtils;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.util.Date;
+import java.util.List;
 
 /**
- * 策略实例运行记录实体
- * 对应表: GOLD_STRATEGY_INSTANCE
+ * @Description: 策略运行实例实体
+ * @author: cuijian
+ * @date: 2023/10/18 10:52
  */
 @Data
 public class HedgeStrategyInstanceEntity {
 
+        private String instanceId;      // 策略运行实例id
+        private String strategyId;      // 策略模板ID
+        private String symbolConfigId;  // 合约配置id
+        private String tagCode;         // 交易标签
+        private String status;          // 状态
+        private String configSnapshot;  // 策略配置快照
+        private String symbolSliceSnap; // 平盘合约配置快照
 
+        private String createBy;        // 创建者
+        private String updateBy;        // 更新者
 
-        // ================= 身份标识 =================
-        /**
-         * 策略实例ID (主键, 由管理端生成传入)
-         */
-        private String instanceId;
+        private Date createDate;
+        private Date updateDate;
 
-        /**
-         * 基础配置ID
-         */
-        private String baseConfigId;
+        private String traderNo;        // 交易员
+        private String remark;          // 备注
+        private String delFlag;         // 删除标志 (0代表存在 1代表删除)
 
-        /**
-         * 合约规则组ID
-         */
-        private String symbolConfigId;
+        private BigDecimal hedgedPositionSnap;
+        private BigDecimal clientPositionSnap;
 
-        /**
-         * 交易标签
-         */
-        private String tagId;
+        public HedgeStrategyInstanceEntity() {
+        }
 
-        // ================= 运行状态 =================
-        /**
-         * 执行状态
-         * 见 StrategyStatus 枚举 (0:Created, 1:Monitoring, 2:Hedging, 4:Paused, 10:Stopped, 99:Meltdown)
-         */
-        private Integer status;
+        public HedgeStrategyInstanceEntity(String instanceId, HedgeStrategyConfig config, StrategyPosition positionSummary) {
+                if (StringUtils.isEmpty(instanceId) || config == null) {
+                        return;
+                }
 
-        /**
-         * 停止/熔断原因
-         * (e.g. "User Request", "Gap Limit Exceeded", "Market Data Timeout")
-         */
-        private String stopReason;
+                this.delFlag = "0";
+                this.instanceId = instanceId;
+                this.strategyId = config.getStrategyId(); // 策略ID
 
-        // ================= 统计指标 (Metrics) =================
-        /**
-         * 累计买入成交量 (克)
-         */
-        private BigDecimal totalBuyQty;
+                List<SymbolTimeSlice> symbolTimeSlices = config.getSymbolTimeSlices();
+                if (!CollectionUtils.isEmpty(symbolTimeSlices)) {
+                        SymbolTimeSlice symbolTimeSlice = symbolTimeSlices.get(0);
+                        this.symbolConfigId = symbolTimeSlice.getGroupId(); // 合约配置ID
+                }
 
-        /**
-         * 累计卖出成交量 (克)
-         */
-        private BigDecimal totalSellQty;
+                this.tagCode = config.getTagCode();
+                this.status = String.valueOf(StrategyStatus.CREATED.getCode()); // 初始化状态
 
-        /**
-         * 累计成交笔数
-         */
-        private Integer totalDealCount;
+                // 配置对象序列化为 JSON 快照
+                ObjectMapper objectMapper = new ObjectMapper();
+                objectMapper.registerModule(new JavaTimeModule());
+                try {
+                        String configSnapshotData = objectMapper.writeValueAsString(config);
+                        this.configSnapshot = configSnapshotData;
+                } catch (JsonProcessingException e) {
+                        // 异常情况不做处理，不抛出异常，默认快照为空
+                        this.configSnapshot = "{}";
+                }
 
-        // ================= 审计信息 =================
-        /**
-         * 操作员/启动人
-         */
-        private String operatorName;
+                // 设置创建人和更新人
+                this.createBy = StringUtils.isBlank(config.getUserId()) ? "admin" : config.getUserId();
+                this.updateBy = StringUtils.isBlank(config.getUserId()) ? "admin" : config.getUserId();
 
-        /**
-         * 配置快照 (JSON字符串)
-         * 将启动时的 GoldHedgingConfig 序列化保存，用于事后审计
-         */
-        private String configSnapshot;
+                // 设置时间
+                Date now = new Date();
+                this.createDate = now;
+                this.updateDate = now;
 
-        // ================= 时间戳 =================
-        /**
-         * 启动时间
-         */
-        private LocalDateTime creatTime;
+                this.traderNo = config.getTraderNo();
+                this.remark = "";
 
-        /**
-         * 最新更新时间 (心跳)
-         */
-        private LocalDateTime updateTime;
-
-
-
+                // 记录持仓快照
+                if (positionSummary != null) {
+                        this.clientPositionSnap = positionSummary.getHedgedNetPosition();
+                        this.hedgedPositionSnap = positionSummary.getMgapNetPosition();
+                }
+        }
 }
