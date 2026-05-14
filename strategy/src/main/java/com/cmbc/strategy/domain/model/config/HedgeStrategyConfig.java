@@ -28,7 +28,7 @@ public class HedgeStrategyConfig extends StrategyConfig {
     private BigDecimal maxQtySum;
     private String chaseFlatOrderType;
     private Integer chaseNumber;
-    private String chaseOrderDeviation;
+    private BigDecimal chaseOrderDeviation;
     private BigDecimal orderTimeoutSec;
     private BigDecimal hedgingMaxTime;
     private String offsetFlag;
