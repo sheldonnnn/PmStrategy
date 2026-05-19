@@ -1,6 +1,7 @@
 package com.cmbc.strategy.service.instance;
 
 
+import com.cmbc.oms.domain.order.model.ExecutionReport;
 import com.cmbc.strategy.domain.model.market.Depth;
 import com.cmbc.strategy.domain.model.order.OrderReport;
 
@@ -9,7 +10,7 @@ public interface IStrategy {
     void start();
     void pause();
     void resume();
-    void stop();
+    void stop(String reason);
 
     // === 事件回调 (由框架层驱动) ===
     void onMatch(ExecutionReport executionReport);                      // 行情驱动

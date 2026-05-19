@@ -1,4 +1,5 @@
 package com.cmbc.strategy.domain.model.config;
+import com.cmbc.strategy.domain.dto.ClientMemberInfo;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.util.Date;
@@ -57,6 +58,7 @@ public class HedgeStrategyConfig extends StrategyConfig {
     private String tradeNode;
     private String exchId;
     private String counterParty;
+    private String fxSymbol;
 
     /**
      * 分时段平盘规则列表

@@ -1,7 +1,5 @@
 package com.cmbc.strategy.domain.dto;
 
-package com.cmbc.strategy.domain.dto;
-
 import lombok.Data;
 import java.util.Map;
 

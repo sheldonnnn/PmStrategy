@@ -6,15 +6,15 @@ import com.cmbc.oms.facade.strategy.OmsService;
 import com.cmbc.strategy.constant.StrategyStatus;
 import com.cmbc.strategy.domain.dto.HedgeStrategyRequest;
 import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
+import com.cmbc.strategy.domain.model.hedge.ChaseRequest;
 import com.cmbc.strategy.integration.IMarketDataService;
 import com.cmbc.strategy.integration.IPositionService;
-import com.cmbc.strategy.service.OrderAlgoService;
+import com.cmbc.oms.domain.order.service.OrderAlgoService;
 import com.cmbc.strategy.service.StrategyContext;
 import com.cmbc.strategy.service.instance.HedgeStrategyInstance;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.TaskScheduler;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -120,7 +120,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
     /**
      * 启动追单操作
      */
-    public void startChaseStrategy(HedgeStrategyChaseRequest request) {
+    public void startChaseStrategy(ChaseRequest request) {
         if (request == null || StringUtils.isEmpty(request.getInstanceId())) {
             log.warn("收到非法事件，InstanceId为空: {}", request);
             return;
@@ -130,7 +130,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         HedgeStrategyInstance instance = runningInstances.get(request.getInstanceId());
         if ("0".equals(request.getIsChase())) {
             log.warn("InstanceId: {}不允许追单，停止策略！", request.getInstanceId());
-            instance.stop();
+            instance.stop("交易员拒绝追单，停止策略！");
             return;
         }
 

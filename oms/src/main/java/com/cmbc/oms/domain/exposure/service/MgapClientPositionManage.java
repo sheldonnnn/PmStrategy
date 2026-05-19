@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import com.cmbc.mds.distribution.PloyPrices;
 import com.cmbc.mds.service.MergeQuotesCacheService;
-import com.cmbc.oms.constant.BusinessConstant;
+import com.cmbc.oms.constant.BaseConstants;
 import com.cmbc.oms.domain.basic.BasicParamCacheManager;
 import com.cmbc.oms.domain.exposure.model.FolderPosition;
 import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
@@ -31,7 +31,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
-import com.alibaba.fastjson.JSONObject;
 
 @Service
 public class MgapClientPositionManage {
@@ -216,7 +215,7 @@ public class MgapClientPositionManage {
                 netDealAmountSummary = netDealAmountSummary.add(value.getAmt());
             } else if ("XAUUSD".equals(key)) {
                 // 伦敦金转换逻辑
-                netPositionSummary = netPositionSummary.add(value.getQty().multiply(BusinessConstant.OUNCE_GRAM)).setScale(4, RoundingMode.HALF_UP);
+                netPositionSummary = netPositionSummary.add(value.getQty().multiply(BaseConstants.OUNCE_GRAM)).setScale(4, RoundingMode.HALF_UP);
 
                 PloyPrices fxRatePrice = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol(fxSymbol);
                 if (fxRatePrice != null && fxRatePrice.getMidPx() != null) {
@@ -285,7 +284,7 @@ public class MgapClientPositionManage {
                         profitLossSummary = profitLossSummary.add(info.getProfitLoss());
 
                         // 判断是否为上海期货交易所
-                        if (contractInfoBasic.getExchCode().equals(BusinessConstant.SH_FUTURES_EXCHANGE)) {
+                        if (contractInfoBasic.getExchCode().equals(BaseConstants.SH_FUTURES_EXCHANGE)) {
                             PloyPrices ployPrice = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol(positionSnapshot.getSymbol());
                             PloyPrices basePrice = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol("Au(T+D)");
 
@@ -300,7 +299,7 @@ public class MgapClientPositionManage {
                             // 非内盘/期货的处理逻辑
                             info.setNetPosition(positionSnapshot.getNetQty());
                             // 净头寸换算（可能涉及盎司到克的转换）
-                            info.getNetPosition().multiply(BusinessConstant.OUNCE_GRAM); // 净敞口头寸
+                            info.getNetPosition().multiply(BaseConstants.OUNCE_GRAM); // 净敞口头寸
 
                             netPositionSummary = netPositionSummary.add(info.getNetPosition());
 

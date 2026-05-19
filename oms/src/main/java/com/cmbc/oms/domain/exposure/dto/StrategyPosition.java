@@ -7,7 +7,7 @@ import java.math.BigDecimal;
 @Data
 public class StrategyPosition {
 
-    private BigDecimal mgapNewPosition;
+    private BigDecimal mgapNetPosition;
     private BigDecimal hedgedNetPosition;
     private BigDecimal frozenNetPosition;
     private String updateTime;

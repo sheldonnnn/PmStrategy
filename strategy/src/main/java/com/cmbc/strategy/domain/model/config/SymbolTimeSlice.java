@@ -26,6 +26,9 @@ public class SymbolTimeSlice {
          * 合约类型
          * DB: CONTRACT_TYPE (VARCHAR2 2)
          */
+        private String contractType;
+
+
         private String domesticType;
 
         /**
@@ -82,7 +85,7 @@ public class SymbolTimeSlice {
          */
         private String fxSymbol;
 
-        private Integer unit;
+        private BigDecimal unit;
         private String groupId;
         private String exchCode;
 
