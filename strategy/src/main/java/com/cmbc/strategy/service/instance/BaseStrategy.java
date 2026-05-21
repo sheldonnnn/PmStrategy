@@ -3,6 +3,7 @@ package com.cmbc.strategy.service.instance;
 import com.cmbc.oms.controller.dto.StrategyOrder;
 import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
 import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
+import com.cmbc.oms.domain.order.model.NewOrder;
 import com.cmbc.strategy.domain.model.config.StrategyConfig;
 import com.cmbc.strategy.domain.model.market.PloyPrices;
 import com.cmbc.strategy.domain.model.market.SubscribeRequest;
@@ -71,7 +72,10 @@ public abstract class BaseStrategy<T extends StrategyConfig> implements IStrateg
         }catch (Exception e){
             log.error("cancelAllOrders error: {}", e.getMessage());
         }
+    }
 
+    protected List<NewOrder> getPendingOrder(){
+        return strategyContext.getOmsService().getTradingByStrategyId(this.instanceId);
     }
     /**
      * SDK能力：订阅行情

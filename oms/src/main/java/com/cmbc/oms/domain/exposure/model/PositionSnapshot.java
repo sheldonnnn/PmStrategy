@@ -77,7 +77,9 @@ public class PositionSnapshot {
         return shortAmount.subtract(longAmount);
     }
         // --- 核心方法：加锁保证单个合约的更新绝对安全 ---
-
+    public BigDecimal getNetFrozenWeight(){
+        return frozenLongWeight.subtract(frozenShortWeight);
+    }
     public synchronized void freezeLong(BigDecimal qty, BigDecimal price) {
         this.frozenLongQty = this.frozenLongQty.add(qty);
         BigDecimal addWeight = calWeight(qty);
