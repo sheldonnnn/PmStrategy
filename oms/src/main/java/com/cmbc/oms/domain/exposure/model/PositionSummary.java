@@ -15,6 +15,8 @@ public class PositionSummary implements Serializable {
     private String symbol;             // 交易品种
 
     private BigDecimal netPosition;    // 净敞口头寸
+    private BigDecimal netPositionUSD;
+    private BigDecimal netPositionXAU;
 
     private BigDecimal netAmount;      // 净敞口金额
 
