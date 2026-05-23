@@ -36,8 +36,8 @@ import org.springframework.web.client.RestTemplate;
 
 @Service
 @EnableScheduling
-public class MgapClientPositionManage {
-    private final static Logger logger = LoggerFactory.getLogger(MgapClientPositionManage.class);
+public class MgapClientPositionService {
+    private final static Logger logger = LoggerFactory.getLogger(MgapClientPositionService.class);
     private Map<String, MgapPositionSnapshot> mgapPositionCache = new ConcurrentHashMap<>();
     @Value("${mgap.url}")
     String url;
@@ -45,7 +45,7 @@ public class MgapClientPositionManage {
     @Autowired
     private RestTemplate restTemplate;
     @Autowired
-    private ExposureManage exposureManage;
+    private QuantPositionManager quantPositionManager;
     @Autowired
     private MergeQuotesCacheService mergeQuotesCacheService;
 
@@ -57,9 +57,9 @@ public class MgapClientPositionManage {
     private static final Integer REPLY_INTERVAL = 30000;
 
     // 状态变量
-    private boolean isCircuitOpen = false;
-    private boolean isConnected = false;
-    private long lastFailTime = 0;
+    private volatile boolean isCircuitOpen = false;
+    private volatile boolean isConnected = false;
+    private volatile long lastFailTime = 0;
     private AtomicInteger failCount = new AtomicInteger(0);
     // private Map<String, GoldPrice> priceCache = new HashMap<>(); // 行情数据缓存
 
@@ -83,8 +83,8 @@ public class MgapClientPositionManage {
                     return;
                 }
                 handleSuccess();
-                // 更新缓存
-                mgapPositionCache = mgapPosResponse.getTotalAll();
+                // 更新缓存，使用 ConcurrentHashMap 包装，防止其它线程遍历时发生 ConcurrentModificationException
+                this.mgapPositionCache = new ConcurrentHashMap<>(mgapPosResponse.getTotalAll());
                 this.isConnected = true;
             } else {
                 mgapPositionCache.clear(); // 查询失败则清除头寸数据
@@ -103,9 +103,9 @@ public class MgapClientPositionManage {
         PositionDataResponse hedgedPosition = new PositionDataResponse();
         try {
             // 1. 获取头寸数据
-            PositionDataResponse mgapPositionInfo = getMgapPositionSummary(fxSymbol);
+            PositionDataResponse mgapPositionInfo = aggregateClientPositions(fxSymbol);
             // 2. 获取hedged头寸数据
-            PositionDataResponse hedgedPositionResponse = getHedgedPosition(fxSymbol);
+            PositionDataResponse hedgedPositionResponse = aggregateHedgePositions(fxSymbol);
             PositionSummary hedgePositionSummary = hedgedPositionResponse.getPositionSummary(); // quant汇总数据
             PositionSummary mgapPositionSummary = mgapPositionInfo.getPositionSummary(); // 银存金头寸汇总数据
             if (null == hedgePositionSummary || null == mgapPositionSummary) {
@@ -139,44 +139,56 @@ public class MgapClientPositionManage {
     }
 
     /**
-     * 缓存中获取积存金头寸汇总数据
+     * 专门提供给量化策略极速获取所需的头寸视图（跳过前端不必要的汇总与汇率逻辑）
      */
-    public StrategyPosition getMgapPositionSummaryCache() {
-        StrategyPosition strategyPosition = new StrategyPosition();
-        PositionDataResponse mgapPositionRes = getMgapPositionSummary(null);
-        PositionSummary mgapPositionSummary = mgapPositionRes.getPositionSummary();
-        if (null == mgapPositionSummary || !isValid(mgapPositionSummary.getUpdateTime())) {
-            // 调用接口查询最新的汇总信息
-            // MgapPosResponse mgapPosResponse = restTemplate.postForObject(url, null,
-            // MgapPosResponse.class);
-            // if (Objects.isNull(mgapPositionSummary) ||
-            // !isValid(mgapPositionSummary.getUpdateTime())) {
+    public StrategyPosition buildStrategyPositionView() {
+        if (CollectionUtils.isEmpty(this.mgapPositionCache)) {
             return null;
-            // }
         }
-        List<PositionVo> positionVos = mgapPositionRes.getMgapPosition();
+
         BigDecimal clientPosition = BigDecimal.ZERO;
-        if (!CollectionUtils.isEmpty(positionVos)) {
-            // 统计积存金客盘头寸信息及更新时间
-            for (PositionVo vo : positionVos) {
-                if ("PGCRMB".equals(vo.getSymbol())) {
-                    clientPosition = clientPosition.add(vo.getNetPosition());
-                }
-                if ("KAURMB".equals(vo.getSymbol())) {
-                    clientPosition = clientPosition.add(vo.getNetPosition());
-                    strategyPosition.setMgapClientPositionTime(vo.getPositionUpdateTime());
-                }
+        BigDecimal mgapPosition = BigDecimal.ZERO;
+        String positionUpdateTime = null;
+
+        for (Map.Entry<String, MgapPositionSnapshot> entry : this.mgapPositionCache.entrySet()) {
+            String key = entry.getKey();
+            MgapPositionSnapshot value = entry.getValue();
+
+            if ("PGCRMB".equals(key)) {
+                clientPosition = clientPosition.add(value.getQty());
+                mgapPosition = mgapPosition.add(value.getQty());
+            } else if ("KAURMB".equals(key)) {
+                clientPosition = clientPosition.add(value.getQty());
+                mgapPosition = mgapPosition.add(value.getQty());
+                positionUpdateTime = value.getPositionTime();
+            } else if ("AURMB".equals(key)) {
+                mgapPosition = mgapPosition.add(value.getQty());
+            } else if ("XAUUSD".equals(key)) {
+                mgapPosition = mgapPosition.add(value.getQty().multiply(BaseConstants.OUNCE_GRAM)).setScale(4, RoundingMode.HALF_UP);
             }
         }
+
+        if (null == positionUpdateTime || !isValid(positionUpdateTime)) {
+            return null;
+        }
+
+        StrategyPosition strategyPosition = new StrategyPosition();
         strategyPosition.setMgapClientPosition(clientPosition);
-        BigDecimal mgapPosition = mgapPositionSummary.getNetPosition();
-        PositionSnapshot quantPosition = exposureManage.getTotalPosition("MgapHedge");
-        BigDecimal hedgedPosition = quantPosition.getNetWeight();
-        BigDecimal frozenPosition = quantPosition.getNetFrozenWeight();
+        strategyPosition.setMgapClientPositionTime(positionUpdateTime);
+        strategyPosition.setUpdateTime(positionUpdateTime);
         strategyPosition.setMgapNetPosition(mgapPosition);
-        strategyPosition.setHedgedNetPosition(hedgedPosition);
-        strategyPosition.setFrozenNetPosition(frozenPosition);
-        strategyPosition.setUpdateTime(mgapPositionSummary.getUpdateTime());
+        strategyPosition.setMgapClientPositionTime(positionUpdateTime); //todo
+
+
+        PositionSnapshot quantPosition = quantPositionManager.getTotalPosition("MgapHedge");
+        if (quantPosition != null) {
+            BigDecimal hedgedPosition = quantPosition.getNetWeight();
+            BigDecimal frozenPosition = quantPosition.getNetFrozenWeight();
+            strategyPosition.setHedgedNetPosition(hedgedPosition);
+            strategyPosition.setFrozenNetPosition(frozenPosition);
+        }
+        
+
         return strategyPosition;
     }
 
@@ -201,7 +213,7 @@ public class MgapClientPositionManage {
     /**
      * 按接口查询积存金头寸汇总信息数据
      */
-    public PositionDataResponse getMgapPositionSummary(String fxSymbol) {
+    public PositionDataResponse aggregateClientPositions(String fxSymbol) {
         PositionDataResponse mgapPositionResponse = new PositionDataResponse();
         List<PositionVo> mgapPositionList = new ArrayList<>();
         PositionSummary positionSummary = new PositionSummary();
@@ -275,7 +287,7 @@ public class MgapClientPositionManage {
     /**
      * 获取量化平盘头寸信息
      */
-    public PositionDataResponse getHedgedPosition(String fxSymbol) {
+    public PositionDataResponse aggregateHedgePositions(String fxSymbol) {
         PositionDataResponse hedgedPositionResponse = new PositionDataResponse();
         List<PositionVo> hedgedPositionList = new ArrayList<>();
         PositionSummary positionSummary = new PositionSummary();
@@ -286,11 +298,12 @@ public class MgapClientPositionManage {
         BigDecimal netPositionUSD = BigDecimal.ZERO;// 美元敞口
         BigDecimal netPositionXAU = BigDecimal.ZERO;// XAU敞口
 
-        Map<String, PositionSnapshot> symbolPositions = getGoldHedgeInfo();
+        Map<String, PositionSnapshot> symbolPositions = getHedgePositionDetails();
         if (null != symbolPositions) {
             int id = 1;
             for (PositionSnapshot positionSnapshot : symbolPositions.values()) {
-                synchronized (positionSnapshot) {
+                // 移除有死锁风险的业务对象锁
+                {
                     PositionVo info = new PositionVo();
                     info.setId(id++);
                     info.setSymbol(positionSnapshot.getSymbol());
@@ -379,7 +392,7 @@ public class MgapClientPositionManage {
      * 
      * @return 境内外头寸汇总列表
      */
-    public List<SymbolPositionVo> getHedgedSymbolPosition() {
+    public List<SymbolPositionVo> getHedgePositionSummaryByMarket() {
         BigDecimal netAmountOutSummary = BigDecimal.ZERO; // 境外平盘金额汇总
         BigDecimal netAmountInSummary = BigDecimal.ZERO; // 境内平盘金额汇总
         BigDecimal netPositionOutSummary = BigDecimal.ZERO; // 净头寸--左头寸(盎司)---数量 汇总-境外
@@ -391,10 +404,11 @@ public class MgapClientPositionManage {
 
         try {
             // 1. 获取统计量化平盘头寸数据
-            Map<String, PositionSnapshot> symbolPositions = getGoldHedgeInfo();
+            Map<String, PositionSnapshot> symbolPositions = getHedgePositionDetails();
             if (null != symbolPositions) {
                 for (PositionSnapshot positionSnapshot : symbolPositions.values()) {
-                    synchronized (positionSnapshot) {
+                    // 移除有死锁风险的业务对象锁
+                    {
                         // 逻辑：基于境内外属性累加金额与头寸
                         if (BaseConstants.DOMESTIC_TYPE_INNER.equals(positionSnapshot.getDomesticType())) {
                             netAmountInSummary = netAmountInSummary.add(positionSnapshot.getNetAmount());
@@ -451,10 +465,10 @@ public class MgapClientPositionManage {
     }
 
     /**
-     * 获取量化平盘头寸信息（查询总敞口专用）
+     * 获取量化平盘头寸信息快照（查询总敞口专用）
      */
-    private Map<String, PositionSnapshot> getGoldHedgeInfo() {
-        FolderPosition folderPosition = exposureManage.getFolderPosition("MgapHedge");
+    private Map<String, PositionSnapshot> getHedgePositionDetails() {
+        FolderPosition folderPosition = quantPositionManager.getFolderPosition("MgapHedge");
         if (null == folderPosition) {
             return null;
         }

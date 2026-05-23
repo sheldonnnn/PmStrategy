@@ -28,7 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 @Slf4j
 @Service
-public class ExposureManage implements PloyPricesHandler, CommandLineRunner {
+public class QuantPositionManager implements PloyPricesHandler, CommandLineRunner {
 
 
         // 内存头寸字典 Key: FolderId

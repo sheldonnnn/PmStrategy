@@ -2,8 +2,8 @@ package com.cmbc.strategy.integration.impl;
 
 import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
 import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
-import com.cmbc.oms.domain.exposure.service.ExposureManage;
-import com.cmbc.oms.domain.exposure.service.MgapClientPositionManage;
+import com.cmbc.oms.domain.exposure.service.QuantPositionManager;
+import com.cmbc.oms.domain.exposure.service.MgapClientPositionService;
 import com.cmbc.strategy.integration.IPositionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -17,18 +17,18 @@ import org.springframework.stereotype.Service;
 public class PositionService implements IPositionService {
 
     @Autowired
-    private MgapClientPositionManage mgapClientPositionManage;
+    private MgapClientPositionService mgapClientPositionService;
 
     @Autowired
-    private ExposureManage exposureManage;
+    private QuantPositionManager quantPositionManager;
 
     @Override
     public StrategyPosition getMgapPositionSummary() {
-        return mgapClientPositionManage.getMgapPositionSummaryCache();
+        return mgapClientPositionService.buildStrategyPositionView();
     }
 
     @Override
     public PositionSnapshot getFolderPositionSummary(String folderId) {
-        return exposureManage.getTotalPosition(folderId);
+        return quantPositionManager.getTotalPosition(folderId);
     }
 }
