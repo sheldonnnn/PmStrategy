@@ -27,6 +27,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import com.cmbc.oms.dao.MgapPositionBalanceMapper;
+import com.cmbc.oms.domain.exposure.entity.MgapPositionBalanceEntity;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -44,6 +49,8 @@ public class MgapClientPositionService {
 
     @Autowired
     private RestTemplate restTemplate;
+    @Autowired
+    private MgapPositionBalanceMapper mgapPositionBalanceMapper;
     @Autowired
     private QuantPositionManager quantPositionManager;
     @Autowired
@@ -76,7 +83,7 @@ public class MgapClientPositionService {
             MgapPosResponse mgapPosResponse = restTemplate.postForObject(url, null, MgapPosResponse.class);
             logger.info("积存金头寸查询结果返回结果:code={}, {}", mgapPosResponse.getReturnCode().getType(), JSONObject.toJSONString(mgapPosResponse.getTotalAll()))
             if ("S".equals(mgapPosResponse.getReturnCode())) {
-                if(null == mgapPosResponse.getTotalAll()){
+                if (null == mgapPosResponse.getTotalAll()) {
                     logger.error("查询积存金头寸信息，接口数据为空！！！查询结果：{}", mgapPosResponse);
                     this.mgapPositionCache.clear();
                     this.isConnected = false;
@@ -181,13 +188,11 @@ public class MgapClientPositionService {
 
 
         PositionSnapshot quantPosition = quantPositionManager.getTotalPosition("MgapHedge");
-        if (quantPosition != null) {
-            BigDecimal hedgedPosition = quantPosition.getNetWeight();
-            BigDecimal frozenPosition = quantPosition.getNetFrozenWeight();
-            strategyPosition.setHedgedNetPosition(hedgedPosition);
-            strategyPosition.setFrozenNetPosition(frozenPosition);
-        }
-        
+        BigDecimal hedgedPosition = quantPosition.getNetWeight();
+        BigDecimal frozenPosition = quantPosition.getNetFrozenWeight();
+        strategyPosition.setHedgedNetPosition(hedgedPosition);
+        strategyPosition.setFrozenNetPosition(frozenPosition);
+
 
         return strategyPosition;
     }
@@ -256,13 +261,33 @@ public class MgapClientPositionService {
                 // 伦敦金转换逻辑
                 netPositionSummary = netPositionSummary.add(value.getQty().multiply(BaseConstants.OUNCE_GRAM))
                         .setScale(4, RoundingMode.HALF_UP);
+                // XAU浮动盈亏计算 (独立于汇率，保证明细始终有本币损益)
+                BigDecimal usdPnL = BigDecimal.ZERO;
+                if(value.getQty().compareTo(BigDecimal.ZERO) == 0){
+                    usdPnL = value.getAmt();
+                }else {
+                    //                // 积存金系统可能没有同步 XAUUSD 的行情，此时主动查缓存获取
+                    PloyPrices xauPriceObj = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol("XAUUSD");
+                    BigDecimal avgPrice = value.getAmt().divide(value.getQty(),3,BigDecimal.ROUND_HALF_UP).negate();
+                    mgapPosition.setAvgPrice(avgPrice);
+                    if (xauPriceObj != null && xauPriceObj.getMidPx() != null) {
+                        BigDecimal xauMktPrice = xauPriceObj.getMidPx();
+                        mgapPosition.setMktPrice(xauMktPrice); // 补齐明细里缺失的市价
+                        usdPnL = xauMktPrice.multiply(value.getQty()).add(value.getAmt());
+                    }
+                }
+                mgapPosition.setProfitLoss(usdPnL);
                 PloyPrices fxRatePrice = mergeQuotesCacheService.getSystemInitPloyPriceBySymbol(fxSymbol);
                 if (fxRatePrice != null && fxRatePrice.getMidPx() != null) {
                     BigDecimal fxRate = fxRatePrice.getMidPx();
                     netDealAmountSummary = netDealAmountSummary.add(value.getAmt().multiply(fxRate)).setScale(2,
                             RoundingMode.HALF_UP);
-                    // todo XAU浮动盈亏计算...
 
+                    if (usdPnL != null) {
+                        // 3. 折算人民币损益并累加到大盘汇总
+                        BigDecimal rmbPnL = usdPnL.multiply(fxRate);
+                        profitLossSummary = profitLossSummary.add(rmbPnL).setScale(2, RoundingMode.HALF_UP);
+                    }
                 }
             }
             mgapPositionList.add(mgapPosition);
@@ -389,7 +414,7 @@ public class MgapClientPositionService {
 
     /**
      * 统计量化平盘头寸数据
-     * 
+     *
      * @return 境内外头寸汇总列表
      */
     public List<SymbolPositionVo> getHedgePositionSummaryByMarket() {
@@ -462,6 +487,48 @@ public class MgapClientPositionService {
 
         logger.info("量化平盘头寸数据组装完成--");
         return symbolPositionVoList;
+    }
+
+    /**
+     * 积存金外部头寸日终结转任务：每天 18:30:00 触发
+     */
+    @Scheduled(cron = "0 30 18 * * ?")
+    public void persistDailyMgapPositionSnapshot() {
+        logger.info("开始执行积存金客盘头寸快照结转...");
+        if (CollectionUtils.isEmpty(this.mgapPositionCache)) {
+            logger.warn("积存金头寸缓存为空，跳过日终结转！");
+            return;
+        }
+
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        
+        // 借助原有的汇集方法，获取处理好的数据（包含市价、美元损益等）
+        PositionDataResponse response = aggregateClientPositions("USD/CNH");
+        if (response != null && response.getMgapPosition() != null) {
+            for (PositionVo positionVo : response.getMgapPosition()) {
+                try {
+                    MgapPositionBalanceEntity entity = new MgapPositionBalanceEntity();
+                    // 这里注意，前端展示时 name存的交易品种如XAUUSD，symbol存的是名称如伦敦金（这是之前代码的写法）
+                    entity.setSymbol(positionVo.getName()); // 真实的Symbol
+                    entity.setName(positionVo.getSymbol()); // 真实的名称
+                    entity.setNetPosition(positionVo.getNetPosition()); // 净头寸
+                    entity.setNetAmount(positionVo.getNetAmount());   // 净金额
+                    entity.setAvgPrice(positionVo.getAvgPrice()); // 均价
+                    entity.setMktPrice(positionVo.getMktPrice()); // 最新市价
+                    entity.setProfitLoss(positionVo.getProfitLoss()); // 浮动盈亏
+                    
+                    entity.setStatisticDate(today);
+                    entity.setCreateTime(LocalDateTime.now());
+                    entity.setUpdateTime(LocalDateTime.now());
+                    
+                    mgapPositionBalanceMapper.insert(entity);
+                    logger.info("积存金客盘头寸结转成功: {}", entity.getSymbol());
+                } catch (Exception e) {
+                    logger.error("积存金客盘头寸结转落库失败: {}", positionVo.getName(), e);
+                }
+            }
+        }
+        logger.info("积存金客盘头寸快照结转任务完成！");
     }
 
     /**

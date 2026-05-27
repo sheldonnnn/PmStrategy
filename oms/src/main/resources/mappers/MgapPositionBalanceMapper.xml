@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cmbc.oms.dao.MgapPositionBalanceMapper">
+
+    <resultMap id="BaseResultMap" type="com.cmbc.oms.domain.exposure.entity.MgapPositionBalanceEntity">
+        <result column="symbol" property="symbol" />
+        <result column="name" property="name" />
+        <result column="net_position" property="netPosition" />
+        <result column="net_amount" property="netAmount" />
+        <result column="avg_price" property="avgPrice" />
+        <result column="mkt_price" property="mktPrice" />
+        <result column="profit_loss" property="profitLoss" />
+        <result column="update_time" property="updateTime" />
+        <result column="create_time" property="createTime" />
+        <result column="statistic_date" property="statisticDate" />
+    </resultMap>
+
+    <insert id="insert" parameterType="com.cmbc.oms.domain.exposure.entity.MgapPositionBalanceEntity">
+        INSERT INTO mgap_position_balance (
+            symbol,
+            name,
+            net_position,
+            net_amount,
+            avg_price,
+            mkt_price,
+            profit_loss,
+            update_time,
+            create_time,
+            statistic_date
+        ) VALUES (
+            #{symbol},
+            #{name},
+            #{netPosition},
+            #{netAmount},
+            #{avgPrice},
+            #{mktPrice},
+            #{profitLoss},
+            #{updateTime},
+            #{createTime},
+            #{statisticDate}
+        )
+    </insert>
+
+</mapper>
