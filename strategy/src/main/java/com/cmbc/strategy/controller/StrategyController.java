@@ -2,7 +2,7 @@ package com.cmbc.strategy.controller;
 
 import com.cmbc.strategy.domain.dto.ApiResponse;
 import com.cmbc.strategy.domain.dto.HedgeStrategyRequest;
-import com.cmbc.strategy.service.hedge.HedgeStrategyManager;
+import com.cmbc.strategy.engine.mgaphedge.manager.HedgeStrategyManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;

@@ -1,4 +1,4 @@
-package com.cmbc.strategy.service.instance;
+package com.cmbc.strategy.engine.core.engine;
 
 import com.cmbc.oms.controller.dto.StrategyOrder;
 import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
@@ -7,7 +7,7 @@ import com.cmbc.oms.domain.order.model.NewOrder;
 import com.cmbc.strategy.domain.model.config.StrategyConfig;
 import com.cmbc.strategy.domain.model.market.PloyPrices;
 import com.cmbc.strategy.domain.model.market.SubscribeRequest;
-import com.cmbc.strategy.service.StrategyContext;
+import com.cmbc.strategy.engine.core.context.StrategyContext;
 import com.cmbc.strategy.util.OrderUtil;
 import lombok.extern.slf4j.Slf4j;
 import javax.annotation.Resource;

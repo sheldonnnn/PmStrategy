@@ -1,4 +1,4 @@
-package com.cmbc.strategy.service.hedge;
+package com.cmbc.strategy.engine.mgaphedge.trigger;
 
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import org.springframework.stereotype.Component;

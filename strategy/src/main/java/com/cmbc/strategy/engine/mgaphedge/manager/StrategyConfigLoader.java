@@ -1,4 +1,4 @@
-package com.cmbc.strategy.service.hedge;
+package com.cmbc.strategy.engine.mgaphedge.manager;
 
 import com.cmbc.strategy.constant.BaseConstant;
 import com.cmbc.strategy.dao.ContractInfoDao;

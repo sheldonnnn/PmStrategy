@@ -1,5 +1,6 @@
-package com.cmbc.strategy.service.hedge;
+package com.cmbc.strategy.engine.mgaphedge.manager;
 
+import com.cmbc.oms.domain.exception.ExceptionNotificationService;
 import com.cmbc.oms.domain.facade.ExecutionReportListener;
 import com.cmbc.oms.domain.order.model.ExecutionReport;
 import com.cmbc.oms.facade.strategy.OmsService;
@@ -10,8 +11,8 @@ import com.cmbc.strategy.domain.model.hedge.ChaseRequest;
 import com.cmbc.strategy.integration.IMarketDataService;
 import com.cmbc.strategy.integration.IPositionService;
 import com.cmbc.oms.domain.order.service.OrderAlgoService;
-import com.cmbc.strategy.service.StrategyContext;
-import com.cmbc.strategy.service.instance.HedgeStrategyInstance;
+import com.cmbc.strategy.engine.core.context.StrategyContext;
+import com.cmbc.strategy.engine.mgaphedge.instance.HedgeStrategyInstance;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.TaskScheduler;
@@ -50,6 +51,8 @@ public class HedgeStrategyManager implements ExecutionReportListener {
     private IPositionService positionService;
     @Autowired
     private KsdStaticQuoteCacheService ksdStaticQuoteCacheService;
+    @Autowired
+    private ExceptionNotificationService exceptionNotificationService;
 
     @Autowired
     private TaskScheduler taskScheduler; // Spring提供的线程池调度器
@@ -90,7 +93,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
             context.setGoldHedgeStrategyInstanceService(goldHedgeStrategyInstanceService);
             context.setGoldHedgeStrategyWebSocketService(goldHedgeStrategyWebSocketService);
             context.setKsdStaticQuoteCacheService(ksdStaticQuoteCacheService);
-
+            context.setExceptionNotificationService(exceptionNotificationService);
             // 2. 从数据库加载并组装配置
             HedgeStrategyConfig config = configLoader.loadConfig(request);
 
