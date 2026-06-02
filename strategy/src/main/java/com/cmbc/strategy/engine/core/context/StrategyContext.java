@@ -26,4 +26,6 @@ public class StrategyContext {
 
     private KsdStaticQuoteCacheService ksdStaticQuoteCacheService;
 
+    private org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor goldHedgeIoExecutor;
+
 }

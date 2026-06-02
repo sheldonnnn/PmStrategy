@@ -59,6 +59,12 @@ public class MgapClientPositionService {
     @Autowired
     private BasicParamCacheManager basicParamCacheManager;
 
+    private final List<com.cmbc.oms.domain.facade.MgapPositionUpdateListener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public void registerListener(com.cmbc.oms.domain.facade.MgapPositionUpdateListener listener) {
+        listeners.add(listener);
+    }
+
     // 熔断控制参数
     private static final Integer MAX_FAIL_COUNT = 4;
     private static final Integer REPLY_INTERVAL = 30000;
@@ -90,9 +96,16 @@ public class MgapClientPositionService {
                     return;
                 }
                 handleSuccess();
-                // 更新缓存，使用 ConcurrentHashMap 包装，防止其它线程遍历时发生 ConcurrentModificationException
                 this.mgapPositionCache = new ConcurrentHashMap<>(mgapPosResponse.getTotalAll());
                 this.isConnected = true;
+                // 通知所有监听器头寸已更新（初期暂不比对 Diff，每次查询成功即通知）
+                for (com.cmbc.oms.domain.facade.MgapPositionUpdateListener listener : listeners) {
+                    try {
+                        listener.onMgapPositionUpdated();
+                    } catch (Exception e) {
+                        logger.error("通知头寸更新事件异常", e);
+                    }
+                }
             } else {
                 mgapPositionCache.clear(); // 查询失败则清除头寸数据
                 this.isConnected = false;

@@ -61,6 +61,22 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
     @Autowired
     private ConcurrentHashMap<String, BigDecimal> mktPrices = new ConcurrentHashMap<>();
 
+    private final List<com.cmbc.oms.domain.facade.QuantPositionUpdateListener> positionUpdateListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public void registerListener(com.cmbc.oms.domain.facade.QuantPositionUpdateListener listener) {
+        this.positionUpdateListeners.add(listener);
+    }
+    
+    private void notifyPositionUpdated() {
+        for (com.cmbc.oms.domain.facade.QuantPositionUpdateListener listener : positionUpdateListeners) {
+            try {
+                listener.onQuantPositionUpdated();
+            } catch (Exception e) {
+                log.error("通知量化头寸更新事件异常", e);
+            }
+        }
+    }
+
     @Autowired
     @Lazy
     private OmsService omsService;
@@ -77,13 +93,6 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
         }
     };
 
-    // 单线程异步落库执行器：保证落库按时间顺序执行，避免数据库并发锁冲突，也不阻塞行情/订单线程
-    private final ExecutorService persistExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "Position-Persist-Thread");
-        t.setDaemon(true);
-        return t;
-    });
-
     // 定义分片数量 (根据CPU核心数或并发预估设置)
     private static final int SHARD_COUNT = 4;
     // 使用公共的无锁哈希分片多线程池
@@ -91,9 +100,6 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
 
     @PreDestroy
     public void destroy() {
-        if (persistExecutor != null) {
-            persistExecutor.shutdown();
-        }
         if (positionUpdatePool != null) {
             positionUpdatePool.shutdown();
         }
@@ -120,7 +126,7 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
     }
 
     // 内部辅助方法，用来挑选匹配的 Router 以决策 Folder
-    private String determineFolder(OrderUpdate event) {
+    private String determineFolder(ExecutionReport executionReport) {
         if (folderRouter == null || folderRouter.isEmpty()) {
             return "DEFAULT"; // Fallback to a default folder if none registered
         }
@@ -242,6 +248,9 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
             log.info("成交更新完成后头寸: {}", snapshot);
 
             persistPositionChangesAsync(snapshot);
+            
+            // 异步处理完成真正的头寸内存更新后，再发射事件通知策略
+            notifyPositionUpdated();
         });
     }
 
@@ -287,6 +296,9 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
         log.info("解冻完成后头寸: {}", snapshot);
 
         persistPositionChangesAsync(snapshot);
+        
+        // 异步处理完成真正的头寸内存更新后，再发射事件通知策略
+        notifyPositionUpdated();
     }
 
     private void persistPositionChangesAsync(PositionSnapshot snapshot) {
@@ -312,7 +324,6 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
         }
 
         // 2. 扔给单线程执行器异步排队落库
-        persistExecutor.submit(() -> {
             try {
                 // 调用持久化层执行 UPSERT 操作（根据 positionId 存在则更新，不存在则插入）
                 balanceMapper.saveOrUpdate(entity);
@@ -321,7 +332,6 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
                 log.error("异步落库头寸失败! PositionId: {}", entity.getPositionId(), e);
                 // 实盘如果持久化报错，系统通常依靠重启重建内存状态，或者对接告警系统人工介入
             }
-        });
     }
 
     /**

@@ -48,7 +48,6 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
     private BigDecimal firstQuotePrice; // 平盘执行首单记录的基准报价
 
     // === 定时任务句柄 ===
-    private ScheduledFuture<?> monitoringTaskHandle;
     private ScheduledFuture<?> executionTaskHandle;
     private ScheduledFuture<?> chaseTaskHandle;
     private ScheduledFuture<?> strategyMonitorPushTask;
@@ -76,7 +75,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
         getOrRefreshActiveSlice();
         if (this.status.get() == StrategyStatus.STOPPED) {
             log.warn("[{}] 策略启动时无可用平盘合约，已触发自动停机。", instanceId);
-            strategyContext.getExceptionNotificationService().pushExceptionInfo(this.instanceId, config.getUserId(), "策略启动时无可用平盘合约，已触发自动停机！", 3, "积存金平盘策略", null);
+            pushExceptionInfo(3, "策略启动时无可用平盘合约，已触发自动停机！");
             return;
         }
 
@@ -123,7 +122,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 if (maxRetries <= 0) {
                     log.warn("[{}] 停机等待超时 (5S)，仍有未撤单或异常订单。强制执行停机逻辑！剩余挂单信息：{}", instanceId,
                             HedgeStrategyInstance.this.getPendingOrder());
-//                    strategyContext.getExceptionNotificationService().pushExceptionInfo(instanceId, config.getUserId(), "策略停机等待超时(5秒)，已强制停机，请检查是否遗留未成挂单！", 3, "积存金平盘策略", null);
+//                    pushExceptionInfo(3, "策略停机等待超时(5秒)，已强制停机，请检查是否遗留未成挂单！");
                 }
 
                 log.info("[{}] 执行最终停机清理工作...", instanceId);
@@ -131,11 +130,10 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 pushStrategyMonitorInfo();
 
                 // 3.2 真正更新状态到持久化服务（触发前端关闭 WS）
-                strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(
-                        config.getUserId(), instanceId, String.valueOf(StrategyStatus.STOPPED.getCode()));
+                updateStatusAsync();
             } catch (Exception e) {
                 log.error("[{}] 异步停机处理过程发生异常", instanceId, e);
-                strategyContext.getExceptionNotificationService().pushExceptionInfo(instanceId,config.getUserId(),"策略停止处理异常！！！",3,"积存金平盘策略",null);
+                pushExceptionInfo(3, "策略停止处理异常！！！");
             }
         }, "strategy-shutdown-" + instanceId).start();
     }
@@ -147,10 +145,8 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
         if (isRunning()) {
             if (status.compareAndSet(status.get(), StrategyStatus.PAUSED)) {
                 //
-                stopTask(monitoringTaskHandle);
                 stopTask(executionTaskHandle);
-                strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(
-                        config.getUserId(), instanceId, String.valueOf(StrategyStatus.PAUSED.getCode()));
+                updateStatusAsync();
                 log.info("[{}] 收到管理端终止指令，策略已终止。", instanceId);
             }
         } else {
@@ -225,16 +221,12 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
         }
         log.info("[{}] Switch to MONITOR phase.", instanceId);
 
-        strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(
-                config.getUserId(), instanceId, String.valueOf(StrategyStatus.MONITOR.getCode()));
+        updateStatusAsync();
         stopTask(executionTaskHandle);
         stopTask(chaseTaskHandle);
-        this.monitoringTaskHandle = schedule(this::runMonitoringLogic, 1000L);
 
-        // 双重检查防并发泄露
-        if (!isRunning()) {
-            stopTask(this.monitoringTaskHandle);
-        }
+        // 主动触发一次检查，避免错过恰好发生的事件
+        runMonitoringLogic();
     }
 
     /**
@@ -246,9 +238,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
             return;
         }
         this.firstQuotePrice = null; // 新一轮平盘执行启动，清理旧的基准报价
-        strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(config.getUserId(),
-                instanceId, String.valueOf(StrategyStatus.HEDGE.getCode()));
-        stopTask(monitoringTaskHandle);
+        updateStatusAsync();
         log.info("[{}] Switch to EXECUTION phase.", instanceId);
         this.hedgingStartTime = System.currentTimeMillis();
 
@@ -279,8 +269,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
             return;
         }
 
-        strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(config.getUserId(),
-                instanceId, String.valueOf(StrategyStatus.CHASE.getCode()));
+        updateStatusAsync();
         log.info("[{}] Switch to Chase phase.", instanceId);
         // 触发追单提醒发送到Web端
         this.chaseNumber = 0;
@@ -300,23 +289,28 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
     /**
      * 监控逻辑：检查是否触发平盘条件
      */
+    public void onPositionUpdateEvent() {
+        if (status.get() == StrategyStatus.MONITOR) {
+            runMonitoringLogic();
+        }
+    }
+
     private void runMonitoringLogic() {
         if (status.get() != StrategyStatus.MONITOR) {
             log.warn("[{}] 执行监控任务跳过：当前状态不是 MONITOR (Actual: {})", instanceId, status.get());
-            if (!isRunning()) {
-                stopTask(monitoringTaskHandle);
-            }
             return;
         }
 
         try {
             // 获取最新持仓
-            StrategyPosition positionSummary = getClientPosition();
-            if (positionSummary == null) {
-                strategyContext.getExceptionNotificationService().pushExceptionInfo(this.instanceId, config.getUserId(), "获取前端头寸数据为空，已触发自动停机！", 3, "积存金平盘策略", null);
-                stop("头寸数据为空，停止策略！！");
+            List<StrategyPosition> positionBeans = getClientPositionList();
+            if (CollectionUtils.isEmpty(positionBeans)) {
+                log.warn("[{}] 获取前端头寸数据为空，直接停止策略运行...", instanceId);
+                pushExceptionInfo(3, "获取前端头寸数据为空，已触发自动停机！");
+                this.stop("获取前端头寸数据为空，停止策略！！");
                 return;
             }
+            StrategyPosition positionSummary = positionBeans.get(0);
             BigDecimal clientPos = positionSummary.getMgapNetPosition();
             BigDecimal hedgedPos = positionSummary.getFrozenNetPosition();
             BigDecimal openPos = positionSummary.getHedgedNetPosition();
@@ -336,8 +330,8 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 switchToExecution();
             }
         } catch (Exception e) {
-            log.error("Monitoring error: ", e);
-            strategyContext.getExceptionNotificationService().pushExceptionInfo(this.instanceId, config.getUserId(), "策略监控计算过程发生系统异常！", 3, "积存金平盘策略", null);
+            log.error("[{}] 策略监控计算过程发生异常！", instanceId, e);
+            pushExceptionInfo(3, "策略监控计算过程发生系统异常！");
         }
     }
 
@@ -389,10 +383,8 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 handleHedgingExecution(currentSlice, positionSummary);
             }
         } catch (Exception e) {
-            strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(config.getUserId(),
-                    instanceId, String.valueOf(StrategyStatus.CHASE.getCode()), "平盘下单异常！");
-            log.error("平盘下单异常！", e);
-            strategyContext.getExceptionNotificationService().pushExceptionInfo(this.instanceId, config.getUserId(), "平盘发单过程发生系统异常！", 3, "积存金平盘策略", null);
+            updateStatusAsync();
+            pushExceptionInfo(3, "平盘发单过程发生系统异常！");
         }
     }
 
@@ -881,12 +873,12 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
 
     @Override
     public void onOrderCancel(ExecutionReport executionReport) {
-
+        log.info("[{}] receive order cancel: {}", instanceId, executionReport);
     }
 
     @Override
     public void onOrderRejected(ExecutionReport executionReport) {
-        // ...
+        log.info("[{}] receive order reject: {}", instanceId, executionReport);
     }
 
     public void onOtherEvent(ExecutionReport executionReport) {
@@ -926,7 +918,27 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
     }
 
     public void pushExceptionInfo(Integer level, String message){
-        strategyContext.getExceptionNotificationService().pushExceptionInfo(this.instanceId,config.getUserId(),message,level,"积存金平盘策略",null);
+        if (strategyContext.getGoldHedgeIoExecutor() != null) {
+            strategyContext.getGoldHedgeIoExecutor().execute(() -> {
+                strategyContext.getExceptionNotificationService().pushExceptionInfo(this.instanceId,config.getUserId(),message,level,"积存金平盘策略",null);
+            });
+        } else {
+            strategyContext.getExceptionNotificationService().pushExceptionInfo(this.instanceId,config.getUserId(),message,level,"积存金平盘策略",null);
+        }
+    }
+
+    private void updateStatusAsync() {
+        if (strategyContext.getGoldHedgeIoExecutor() != null) {
+            strategyContext.getGoldHedgeIoExecutor().execute(() -> {
+                StrategyStatus latestStatus = this.status.get();
+                strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(
+                        config.getUserId(), instanceId, String.valueOf(latestStatus.getCode()));
+            });
+        } else {
+            StrategyStatus latestStatus = this.status.get();
+            strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(
+                    config.getUserId(), instanceId, String.valueOf(latestStatus.getCode()));
+        }
     }
 
 }

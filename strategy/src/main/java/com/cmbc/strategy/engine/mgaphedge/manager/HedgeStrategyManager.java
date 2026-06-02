@@ -8,6 +8,7 @@ import com.cmbc.strategy.constant.StrategyStatus;
 import com.cmbc.strategy.domain.dto.HedgeStrategyRequest;
 import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
 import com.cmbc.strategy.domain.model.hedge.ChaseRequest;
+import com.cmbc.strategy.engine.mgaphedge.trigger.HedgeTrigger;
 import com.cmbc.strategy.integration.IMarketDataService;
 import com.cmbc.strategy.integration.IPositionService;
 import com.cmbc.oms.domain.order.service.OrderAlgoService;
@@ -29,10 +30,8 @@ import com.cmbc.oms.util.concurrent.ShardingThreadPool;
 
 @Service
 @Slf4j
-public class HedgeStrategyManager implements ExecutionReportListener {
+public class HedgeStrategyManager implements ExecutionReportListener, com.cmbc.oms.domain.facade.MgapPositionUpdateListener, com.cmbc.oms.domain.facade.QuantPositionUpdateListener {
 
-    // 策略引擎核心多线程算力池（使用 instanceId 作为分片路由键，保证每个实例内绝对串行无锁）
-    private final ShardingThreadPool strategyEventPool = new ShardingThreadPool(16, "Strategy-Engine");
     private final Map<String, HedgeStrategyInstance> runningInstances = new ConcurrentHashMap<>();
 
     @Autowired
@@ -45,6 +44,10 @@ public class HedgeStrategyManager implements ExecutionReportListener {
     private IMarketDataService marketDataService;
     @Autowired
     private OmsService omsService;
+    @Autowired
+    private com.cmbc.oms.domain.exposure.service.MgapClientPositionService mgapClientPositionService;
+    @Autowired
+    private com.cmbc.oms.domain.exposure.service.QuantPositionManager quantPositionManager;
     @Autowired
     private IGoldHedgeStrategyInstanceService goldHedgeStrategyInstanceService;
     @Autowired
@@ -63,9 +66,46 @@ public class HedgeStrategyManager implements ExecutionReportListener {
     @Autowired
     private IGoldHedgeStrategyWebSocketService goldHedgeStrategyWebSocketService;
 
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("goldHedgeIoExecutor")
+    private org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor goldHedgeIoExecutor;
+
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("goldHedgeEventPool")
+    private com.cmbc.oms.util.concurrent.ShardingThreadPool goldHedgeEventPool;
+
     @PostConstruct
     public void init() {
         omsService.registerListener(this);
+        if (mgapClientPositionService != null) {
+            mgapClientPositionService.registerListener(this);
+        }
+        if (quantPositionManager != null) {
+            quantPositionManager.registerListener(this);
+        }
+    }
+
+    @Override
+    public void onMgapPositionUpdated() {
+        triggerPositionCheck();
+    }
+
+    @Override
+    public void onQuantPositionUpdated() {
+        triggerPositionCheck();
+    }
+    
+    private void triggerPositionCheck() {
+        // 当积存金客盘头寸或量化平盘头寸更新时，遍历所有运行中的策略实例，通过快车道路由触发头寸监控
+        if (!CollectionUtils.isEmpty(runningInstances)) {
+            for (HedgeStrategyInstance instance : runningInstances.values()) {
+                if (instance.isRunning()) {
+                    goldHedgeEventPool.execute(instance.getInstanceId(), () -> {
+                        instance.onPositionUpdateEvent();
+                    });
+                }
+            }
+        }
     }
 
     /**
@@ -83,7 +123,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
             throw new IllegalStateException("Strategy is running: " + instanceId);
         }
 
-        executorService.execute(() -> {
+        goldHedgeIoExecutor.execute(() -> {
             // 1. 策略交互上下文初始化
             StrategyContext context = new StrategyContext();
             context.setTaskScheduler(taskScheduler);
@@ -94,6 +134,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
             context.setGoldHedgeStrategyWebSocketService(goldHedgeStrategyWebSocketService);
             context.setKsdStaticQuoteCacheService(ksdStaticQuoteCacheService);
             context.setExceptionNotificationService(exceptionNotificationService);
+            context.setGoldHedgeIoExecutor(goldHedgeIoExecutor);
             // 2. 从数据库加载并组装配置
             HedgeStrategyConfig config = configLoader.loadConfig(request);
 
@@ -142,11 +183,6 @@ public class HedgeStrategyManager implements ExecutionReportListener {
     }
 
     @Override
-    public void onExecutionReport(ExecutionReport exeReport) {
-        dispatchOrderEvent(exeReport);
-    }
-
-    @Override
     public void onAck(ExecutionReport executionReport) {
         if (executionReport == null || StringUtils.isEmpty(executionReport.getInstanceId())) {
             log.warn("收到非法事件，InstanceId为空: {}", executionReport);
@@ -154,7 +190,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+            goldHedgeEventPool.execute(executionReport.getInstanceId(), () -> {
                 instance.onRtnOrder(executionReport);
             });
         }
@@ -168,7 +204,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+            goldHedgeEventPool.execute(executionReport.getInstanceId(), () -> {
                 instance.onOrderRejected(executionReport);
             });
         }
@@ -183,7 +219,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+            goldHedgeEventPool.execute(executionReport.getInstanceId(), () -> {
                 instance.onMatch(executionReport);
             });
         }
@@ -197,7 +233,7 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+            goldHedgeEventPool.execute(executionReport.getInstanceId(), () -> {
                 instance.onOrderCancel(executionReport);
             });
         }
@@ -235,9 +271,6 @@ public class HedgeStrategyManager implements ExecutionReportListener {
                     log.info("策略{}已停止", instance.getInstanceId());
                 }
             }
-        }
-        if (strategyEventPool != null) {
-            strategyEventPool.shutdown();
         }
         log.info("所有策略已关闭");
     }
