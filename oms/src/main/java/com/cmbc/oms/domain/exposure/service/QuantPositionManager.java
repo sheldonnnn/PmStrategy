@@ -31,12 +31,16 @@ import java.util.concurrent.Executors;
 import javax.annotation.PreDestroy;
 
 import com.cmbc.oms.domain.exposure.entity.PositionBalanceEntity;
+import com.cmbc.oms.domain.facade.ExecutionReportListener;
+import com.cmbc.oms.facade.strategy.OmsService;
+import com.cmbc.oms.util.concurrent.ShardingThreadPool;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 
 @Slf4j
 @Service
-public class QuantPositionManager implements PloyPricesHandler, CommandLineRunner {
+public class QuantPositionManager implements PloyPricesHandler, CommandLineRunner, ExecutionReportListener {
 
 
     // 内存头寸字典 Key: FolderId
@@ -57,6 +61,9 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
     @Autowired
     private ConcurrentHashMap<String, BigDecimal> mktPrices = new ConcurrentHashMap<>();
 
+    @Autowired
+    @Lazy
+    private OmsService omsService;
 
     // 订阅防重池
     private final ConcurrentHashMap<String, Boolean> subscribedSymbols = new ConcurrentHashMap<>();
@@ -66,8 +73,7 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
     // 使用 LinkedHashMap 实现的轻量级 LRU 缓存，最多保留最近的 10000 条回报记录
     private final Map<String, Boolean> processedExecCache = new java.util.LinkedHashMap<String, Boolean>(10000, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
-            return size() > 10000; // 超过 1 万条自动丢弃最旧的
+        protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {return size() > 10000; // 超过 1 万条自动丢弃最旧的
         }
     };
 
@@ -78,10 +84,18 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
         return t;
     });
 
+    // 定义分片数量 (根据CPU核心数或并发预估设置)
+    private static final int SHARD_COUNT = 4;
+    // 使用公共的无锁哈希分片多线程池
+    private final ShardingThreadPool positionUpdatePool = new ShardingThreadPool(SHARD_COUNT, "QuantPos-Shard");
+
     @PreDestroy
     public void destroy() {
         if (persistExecutor != null) {
             persistExecutor.shutdown();
+        }
+        if (positionUpdatePool != null) {
+            positionUpdatePool.shutdown();
         }
     }
 
@@ -91,6 +105,9 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
 
     @Override
     public void run(String... args) {
+        // 向 OMS 核心服务注册监听器，接收事件分发
+        omsService.registerListener(this);
+
         //1 查询合约乘数
         this.contractInfoCache = basicParamCacheManager.getContractInfo();
         balanceMapper.getAllPositionBalance().forEach(positionBalanceEntity -> {
@@ -177,16 +194,12 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
         log.info("头寸冻结完成，冻结后头寸数据: {}", snapshot);
     }
 
-    // ================== 3. 成交与流水处理 (事后) ==================
+    // ================== 3. 成交与流水处理 (基于 OmsService 事件分发) ==================
 
     /**
-     * 处理 OMS 传回的订单事件 (由各策略实例的 SingleThreadExecutor 异步单线程调用)
+     * 防重校验 (多线程分发下共享同一个防重队列，需补充同步锁保护非线程安全的 LinkedHashMap)
      */
-    public void onExecutionReport(ExecutionReport executionReport) {
-        log.info("处理订单事件,订单状态: {},{}", executionReport.getStatus(), executionReport);
-
-        // --- 1. 内存级轻量防重处理 ---
-        // 构造防重 Key：优先使用 execId，若没有则用 orderId + status
+    private boolean isDuplicateExecution(ExecutionReport executionReport) {
         String dedupKey = executionReport.getExecId() != null
                 ? "EXEC_" + executionReport.getExecId()
                 : "ORD_" + executionReport.getOrderId() + "_" + executionReport.getStatus();
@@ -194,52 +207,85 @@ public class QuantPositionManager implements PloyPricesHandler, CommandLineRunne
         synchronized (processedExecCache) {
             if (processedExecCache.containsKey(dedupKey)) {
                 log.warn("检测到重复的订单回报推送，直接丢弃避免头寸双重计算! Key: {}", dedupKey);
-                return;
+                return true;
             }
             processedExecCache.put(dedupKey, Boolean.TRUE);
         }
+        return false;
+    }
 
-        // 【修复】统一路由：保持与 freezePosition 相同的逻辑，避免冻结和解冻路由不一致导致冻结泄漏
+    @Override
+    public void onMatch(ExecutionReport executionReport) {
+        // 使用公共组件：根据头组与品种计算路由键，投递到专属线程
+        String routingKey = determineFolder(executionReport) + "#" + executionReport.getSymbol();
+        positionUpdatePool.execute(routingKey, () -> {
+            log.info("处理成交事件, {}", executionReport);
+            if (isDuplicateExecution(executionReport)) return;
+
+            String folderId = determineFolder(executionReport);
+            String symbol = executionReport.getSymbol();
+
+            FolderPosition folderPosition = positionCache.computeIfAbsent(folderId, k -> new FolderPosition(folderId));
+            PositionSnapshot snapshot = folderPosition.getOrCreateSnapshot(symbol, contractInfoCache.get(symbol).getUnit(), executionReport.getDomesticType());
+            snapshot.setUpdateTime(LocalDateTime.now());
+
+            BigDecimal dealQty = executionReport.getLastQty();
+            log.info("成交更新前头寸: {}", snapshot);
+
+            subscribeIfNeeded(symbol);
+            if ("BUY".equalsIgnoreCase(executionReport.getSide())) {
+                snapshot.unfreezeAndAddLong(dealQty, executionReport.getLastAmt());
+            } else {
+                snapshot.unfreezeAndAddShort(dealQty, executionReport.getLastAmt());
+            }
+            snapshot.calFloatPnl(mktPrices.get(symbol));
+            log.info("成交更新完成后头寸: {}", snapshot);
+
+            persistPositionChangesAsync(snapshot);
+        });
+    }
+
+    @Override
+    public void onCancel(ExecutionReport executionReport) {
+        String routingKey = determineFolder(executionReport) + "#" + executionReport.getSymbol();
+        positionUpdatePool.execute(routingKey, () -> handleUnfreeze(executionReport));
+    }
+
+    @Override
+    public void onReject(ExecutionReport executionReport) {
+        String routingKey = determineFolder(executionReport) + "#" + executionReport.getSymbol();
+        positionUpdatePool.execute(routingKey, () -> handleUnfreeze(executionReport));
+    }
+
+    @Override
+    public void onAck(ExecutionReport executionReport) {
+        // 已报状态无需更新头寸，事前拦截阶段已通过 freezePosition 完成冻结
+        log.info("收到ACK已报事件，头寸无需更新: {}", executionReport.getOrderId());
+    }
+
+    /**
+     * 处理撤废单解冻逻辑 (同样在单线程内安全执行)
+     */
+    private void handleUnfreeze(ExecutionReport executionReport) {
+        log.info("处理撤废单事件, 准备释放冻结: {}", executionReport);
+        if (isDuplicateExecution(executionReport)) return;
+
         String folderId = determineFolder(executionReport);
-        String symbol = executionReport.getSymbol(); // 假设Event里有此字段
-
-        // 1. 幂等校验：查库判断 event.getMatchNo() 是否在 QUANT_POSITION_FLOW 已存在
-        // if (flowMapper.exists(event.getMatchNo())) { return; }
+        String symbol = executionReport.getSymbol();
 
         FolderPosition folderPosition = positionCache.computeIfAbsent(folderId, k -> new FolderPosition(folderId));
         PositionSnapshot snapshot = folderPosition.getOrCreateSnapshot(symbol, contractInfoCache.get(symbol).getUnit(), executionReport.getDomesticType());
         snapshot.setUpdateTime(LocalDateTime.now());
 
-        BigDecimal dealQty = executionReport.getLastQty();
-        log.info("交易更新前头寸: {}", snapshot);
-
-        // 2. 内存原子更新  TODO 枚举统一管理
-        if ("2".equals(executionReport.getStatus()) || "3".equals(executionReport.getStatus())) {
-            subscribeIfNeeded(executionReport.getSymbol());
-            if ("BUY".equalsIgnoreCase(executionReport.getSide())) {
-                snapshot.unfreezeAndAddLong(dealQty, executionReport.getLastAmt()); // 释放对应冻结，增加多头
-            } else {
-                snapshot.unfreezeAndAddShort(dealQty, executionReport.getLastAmt());
-            }
-            snapshot.calFloatPnl(mktPrices.get(executionReport.getSymbol()));
-
-        } else if ("6".equals(executionReport.getStatus()) || "5".equals(executionReport.getStatus()) || "-2".equals(executionReport.getStatus())) { // 撤单或者拒单处理
-            // 撤单或废单：仅释放剩余冻结，不加头寸 TODO: 是否需要考虑部分成交
-            BigDecimal remainingUnfilled = executionReport.getOrderQty().subtract(executionReport.getLastQty() == null ? BigDecimal.ZERO : executionReport.getLastQty());
-            if ("BUY".equalsIgnoreCase(executionReport.getSide())) {
-                snapshot.unfreezeLong(remainingUnfilled);
-            } else {
-                snapshot.unfreezeShort(remainingUnfilled);
-            }
-
+        log.info("解冻前头寸: {}", snapshot);
+        BigDecimal remainingUnfilled = executionReport.getOrderQty().subtract(executionReport.getLastQty() == null ? BigDecimal.ZERO : executionReport.getLastQty());
+        if ("BUY".equalsIgnoreCase(executionReport.getSide())) {
+            snapshot.unfreezeLong(remainingUnfilled);
         } else {
-            log.info("头寸无需更新");
-            return;
+            snapshot.unfreezeShort(remainingUnfilled);
         }
+        log.info("解冻完成后头寸: {}", snapshot);
 
-        log.info("头寸更新完成: {}", snapshot);
-
-        // 3. 异步触发落库
         persistPositionChangesAsync(snapshot);
     }
 

@@ -25,14 +25,14 @@ import javax.annotation.PreDestroy;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import com.cmbc.oms.util.concurrent.ShardingThreadPool;
 
 @Service
 @Slf4j
 public class HedgeStrategyManager implements ExecutionReportListener {
 
-    private final ExecutorService executorService = Executors.newSingleThreadExecutor();
+    // 策略引擎核心多线程算力池（使用 instanceId 作为分片路由键，保证每个实例内绝对串行无锁）
+    private final ShardingThreadPool strategyEventPool = new ShardingThreadPool(16, "Strategy-Engine");
     private final Map<String, HedgeStrategyInstance> runningInstances = new ConcurrentHashMap<>();
 
     @Autowired
@@ -154,7 +154,9 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            instance.onRtnOrder(executionReport);
+            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+                instance.onRtnOrder(executionReport);
+            });
         }
     }
 
@@ -166,7 +168,9 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            instance.onOrderRejected(executionReport);
+            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+                instance.onOrderRejected(executionReport);
+            });
         }
     }
 
@@ -179,7 +183,9 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            instance.onMatch(executionReport);
+            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+                instance.onMatch(executionReport);
+            });
         }
     }
 
@@ -191,7 +197,9 @@ public class HedgeStrategyManager implements ExecutionReportListener {
         }
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            instance.onOrderCancel(executionReport);
+            strategyEventPool.execute(executionReport.getInstanceId(), () -> {
+                instance.onOrderCancel(executionReport);
+            });
         }
     }
 
@@ -227,6 +235,9 @@ public class HedgeStrategyManager implements ExecutionReportListener {
                     log.info("策略{}已停止", instance.getInstanceId());
                 }
             }
+        }
+        if (strategyEventPool != null) {
+            strategyEventPool.shutdown();
         }
         log.info("所有策略已关闭");
     }

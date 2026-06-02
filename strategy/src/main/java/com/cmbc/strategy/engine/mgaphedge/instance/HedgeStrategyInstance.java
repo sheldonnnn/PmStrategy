@@ -39,7 +39,6 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
 
     // 业务组件
     protected final AtomicReference<StrategyStatus> status = new AtomicReference<>(StrategyStatus.CREATED);
-    private ExecutorService orderEventExecutor;
 
     // 当前生效时间片
     private volatile SymbolTimeSlice activeTimeSlice;
@@ -69,13 +68,6 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
         HedgeStrategyInstanceEntity entity = new HedgeStrategyInstanceEntity();
         strategyContext.getGoldHedgeStrategyInstanceService().insertStrategyInstanceStatus(entity);
         log.info("[{}] HedgeStrategy is starting...", instanceId);
-
-        // 初始化事件执行器
-        this.orderEventExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "Order-event-executor-" + instanceId);
-            t.setDaemon(true);
-            return t;
-        });
 
         // 初始化全局变量缓存
         this.HEDGE_STRATEGY_MAP.clear();
@@ -141,21 +133,9 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 // 3.2 真正更新状态到持久化服务（触发前端关闭 WS）
                 strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(
                         config.getUserId(), instanceId, String.valueOf(StrategyStatus.STOPPED.getCode()));
-
-                // 3.3 优雅关闭订单事件处理线程池
-                if (HedgeStrategyInstance.this.orderEventExecutor != null
-                        && !HedgeStrategyInstance.this.orderEventExecutor.isShutdown()) {
-                    HedgeStrategyInstance.this.orderEventExecutor.shutdown();
-                    if (!HedgeStrategyInstance.this.orderEventExecutor.awaitTermination(3,
-                            java.util.concurrent.TimeUnit.SECONDS)) {
-                        HedgeStrategyInstance.this.orderEventExecutor.shutdownNow();
-                    }
-                }
             } catch (Exception e) {
                 log.error("[{}] 异步停机处理过程发生异常", instanceId, e);
                 strategyContext.getExceptionNotificationService().pushExceptionInfo(instanceId,config.getUserId(),"策略停止处理异常！！！",3,"积存金平盘策略",null);
-                if (HedgeStrategyInstance.this.orderEventExecutor != null && !HedgeStrategyInstance.this.orderEventExecutor.isShutdown()) {HedgeStrategyInstance.this.orderEventExecutor.shutdownNow();
-                }
             }
         }, "strategy-shutdown-" + instanceId).start();
     }
@@ -828,20 +808,14 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
     @Override
     public void onMatch(ExecutionReport executionReport) {
         log.info("[{}] 收到成交事件：{}", instanceId, executionReport);
-        // if (this.orderEventExecutor == null || this.status.get() ==
-        // StrategyStatus.STOPPED) {
-        // log.warn("[{}] 收到成交事件，但策略已停止，丢弃事件。", instanceId);
-        // }
-        this.orderEventExecutor.execute(() -> {
-            try {
-                // 获取并更新合约汇总信息
-                StrategyStatSummary statSummary = calMatchSummary(executionReport);
-                HEDGE_STRATEGY_MAP.put(statSummary.getSymbol() + ":" + statSummary.getSide(), statSummary);
-            } catch (Exception e) {
-                log.error("[{}] 处理成交事件异常！event: {}", instanceId, executionReport, e);
-                pushExceptionInfo(3, "处理订单成交回报事件异常！");
-            }
-        });
+        try {
+            // 获取并更新合约汇总信息
+            StrategyStatSummary statSummary = calMatchSummary(executionReport);
+            HEDGE_STRATEGY_MAP.put(statSummary.getSymbol() + ":" + statSummary.getSide(), statSummary);
+        } catch (Exception e) {
+            log.error("[{}] 处理成交事件异常！event: {}", instanceId, executionReport, e);
+            pushExceptionInfo(3, "处理订单成交回报事件异常！");
+        }
     }
 
     /**
