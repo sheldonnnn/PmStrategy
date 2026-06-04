@@ -1,6 +1,7 @@
 package com.cmbc.strategy.domain.entity;
 
 import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.strategy.constant.StrategyStatus;
 import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import lombok.Data;
@@ -62,7 +63,7 @@ public class HedgeStrategyInstanceEntity {
                 }
 
                 this.tagCode = config.getTagCode();
-                this.status = String.valueOf(StrategyStatus.CREATED.getCode()); // 初始化状态
+                this.status = StrategyStatus.CREATED.getCode(); // 初始化状态
 
                 // 配置对象序列化为 JSON 快照
                 ObjectMapper objectMapper = new ObjectMapper();

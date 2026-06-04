@@ -17,6 +17,7 @@ import com.cmbc.strategy.engine.core.context.StrategyContext;
 import com.cmbc.strategy.engine.core.engine.BaseStrategy;
 import com.cmbc.strategy.engine.mgaphedge.trigger.HedgeTrigger;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.CollectionUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -303,15 +304,14 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
 
         try {
             // 获取最新持仓
-            List<StrategyPosition> positionBeans = getClientPositionList();
-            if (CollectionUtils.isEmpty(positionBeans)) {
+            StrategyPosition positionSummary = getClientPosition();
+            if (positionSummary == null) {
                 log.warn("[{}] 获取前端头寸数据为空，直接停止策略运行...", instanceId);
                 pushExceptionInfo(3, "获取前端头寸数据为空，已触发自动停机！");
                 this.stop("获取前端头寸数据为空，停止策略！！");
                 return;
             }
-            StrategyPosition positionSummary = positionBeans.get(0);
-            BigDecimal clientPos = positionSummary.getMgapNetPosition();
+            BigDecimal clientPos = positionSummary.getMgapHedgedPosition().add(positionSummary.getMgapClientPosition());
             BigDecimal hedgedPos = positionSummary.getFrozenNetPosition();
             BigDecimal openPos = positionSummary.getHedgedNetPosition();
 
@@ -358,7 +358,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 stop("头寸数据为空，停止策略！！");
                 return;
             }
-            BigDecimal clientPos = positionSummary.getMgapNetPosition();
+            BigDecimal clientPos = positionSummary.getMgapClientPosition().add(positionSummary.getMgapHedgedPosition());
             BigDecimal openPos = positionSummary.getFrozenNetPosition();
             BigDecimal hedgedPos = positionSummary.getHedgedNetPosition();
 
@@ -412,7 +412,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 stop("头寸数据为空，停止策略！！");
                 return;
             }
-            BigDecimal clientPos = positionSummary.getMgapNetPosition();
+            BigDecimal clientPos = positionSummary.getMgapHedgedPosition().add(positionSummary.getMgapClientPosition());
             BigDecimal openPos = positionSummary.getFrozenNetPosition();
             BigDecimal hedgedPos = positionSummary.getHedgedNetPosition();
 

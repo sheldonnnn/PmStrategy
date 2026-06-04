@@ -33,7 +33,7 @@ import javax.annotation.PreDestroy;
 import com.cmbc.oms.domain.exposure.entity.PositionBalanceEntity;
 import com.cmbc.oms.domain.facade.ExecutionReportListener;
 import com.cmbc.oms.facade.strategy.OmsService;
-import com.cmbc.oms.util.concurrent.ShardingThreadPool;
+import com.cmbc.common.util.concurrent.ShardingThreadPool;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;

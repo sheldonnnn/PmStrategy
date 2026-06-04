@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-2-mapper.dtd">
+<mapper namespace="com.cmbc.strategy.dao.GoldHedgeStrategyInstanceMapper">
+
+    <resultMap id="goldHedgeInstanceResultMap" type="com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity">
+        <id column="INSTANCE_ID" property="instanceId" jdbcType="VARCHAR"/>
+        <id column="STRATEGY_ID" property="strategyId" jdbcType="VARCHAR"/>
+        <id column="SYMBOL_CONFIG_ID" property="symbolConfigId" jdbcType="VARCHAR"/>
+        <id column="TAG_CODE" property="tagCode" jdbcType="VARCHAR"/>
+        <id column="STATUS" property="status" jdbcType="VARCHAR"/>
+        <id column="CONFIG_SNAPSHOT" property="configSnapshot" jdbcType="VARCHAR"/>
+        <id column="CREATE_BY" property="createBy" jdbcType="VARCHAR"/>
+        <id column="UPDATE_BY" property="updateBy" jdbcType="VARCHAR"/>
+        <id column="CREATE_DATE" property="createDate" jdbcType="TIMESTAMP"/>
+        <id column="UPDATE_DATE" property="updateDate" jdbcType="TIMESTAMP"/>
+        <id column="TRADER_NO" property="traderNo" jdbcType="VARCHAR"/>
+        <id column="REMARK" property="remark" jdbcType="VARCHAR"/>
+        <id column="DEL_FLAG" property="delFlag" jdbcType="VARCHAR"/>
+        <id column="TAG_NAME" property="tagName" jdbcType="VARCHAR"/>
+    </resultMap>
+
+    <sql id="goldHedgeInstanceSql">
+        INSTANCE_ID, STRATEGY_ID, SYMBOL_CONFIG_ID, TAG_CODE, TAG_NAME, STATUS, CONFIG_SNAPSHOT, CREATE_BY, UPDATE_BY, CREATE_DATE, UPDATE_DATE, TRADER_NO, REMARK, DEL_FLAG
+    </sql>
+
+    <insert id="insert" parameterType="com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity">
+        insert into GOLD_HEDGE_STRATEGY_INSTANCE
+        (
+        INSTANCE_ID,
+        TAG_NAME,
+        STRATEGY_ID,
+        SYMBOL_CONFIG_ID,
+        TAG_CODE,
+        STATUS,
+        CONFIG_SNAPSHOT,
+        CREATE_BY,
+        UPDATE_BY,
+        CREATE_DATE,
+        UPDATE_DATE,
+        TRADER_NO,
+        REMARK,
+        DEL_FLAG
+        ) VALUES (
+        #{instanceId, jdbcType=VARCHAR},
+        #{tagName, jdbcType=VARCHAR},
+        #{strategyId, jdbcType=VARCHAR},
+        #{symbolConfigId, jdbcType=VARCHAR},
+        #{tagCode, jdbcType=VARCHAR},
+        #{status, jdbcType=VARCHAR},
+        #{configSnapshot, jdbcType=VARCHAR},
+        #{createBy, jdbcType=VARCHAR},
+        #{updateBy, jdbcType=VARCHAR},
+        #{createDate, jdbcType=TIMESTAMP},
+        #{updateDate, jdbcType=TIMESTAMP},
+        #{traderNo, jdbcType=VARCHAR},
+        #{remark, jdbcType=VARCHAR},
+        #{delFlag, jdbcType=VARCHAR}
+        )
+    </insert>
+
+    <update id="updateStatusByInstanceId">
+        UPDATE GOLD_HEDGE_STRATEGY_INSTANCE
+        SET STATUS = #{status, jdbcType=VARCHAR},
+        REMARK = #{reason, jdbcType=VARCHAR}
+        WHERE INSTANCE_ID = #{instanceId, jdbcType=VARCHAR}
+    </update>
+
+    <select id="queryInstance" resultMap="goldHedgeInstanceResultMap">
+        SELECT
+        <include refid="goldHedgeInstanceSql"/>
+        FROM GOLD_HEDGE_STRATEGY_INSTANCE sc
+        <where>
+            AND sc.DEL_FLAG = '0'
+            <if test="instanceId != null and instanceId != ''">
+                AND sc.INSTANCE_ID = #{instanceId, jdbcType=VARCHAR}
+            </if>
+            <if test="strategyId != null and strategyId != ''">
+                AND sc.STRATEGY_ID = #{strategyId, jdbcType=VARCHAR}
+            </if>
+            <if test="symbolConfigId != null and symbolConfigId != ''">
+                AND sc.SYMBOL_CONFIG_ID = #{symbolConfigId, jdbcType=VARCHAR}
+            </if>
+            <if test="tagCode != null and tagCode != ''">
+                AND sc.TAG_CODE = #{tagCode, jdbcType=VARCHAR}
+            </if>
+            <if test="traderNo != null and traderNo != ''">
+                AND sc.TRADER_NO = #{traderNo, jdbcType=VARCHAR}
+            </if>
+            <if test="status != null and status != ''">
+                AND sc.STATUS = #{status, jdbcType=VARCHAR}
+            </if>
+        </where>
+        ORDER BY sc.CREATE_DATE DESC
+    </select>
+
+    <select id="queryInfoByInstanceId" resultMap="goldHedgeInstanceResultMap" parameterType="string">
+        SELECT
+        <include refid="goldHedgeInstanceSql"/>
+        FROM GOLD_HEDGE_STRATEGY_INSTANCE sc
+        where sc.INSTANCE_ID = #{instanceId, jdbcType=VARCHAR} AND sc.DEL_FLAG = '0'
+    </select>
+
+</mapper>

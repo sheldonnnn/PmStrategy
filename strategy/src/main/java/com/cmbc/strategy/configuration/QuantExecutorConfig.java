@@ -3,8 +3,9 @@ package com.cmbc.strategy.configuration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
-import com.cmbc.oms.util.concurrent.ShardingThreadPool;
+import com.cmbc.common.util.concurrent.ShardingThreadPool;
 
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -34,5 +35,15 @@ public class QuantExecutorConfig {
     @Bean(name = "goldHedgeEventPool")
     public ShardingThreadPool goldHedgeEventPool() {
         return new ShardingThreadPool(16, "GoldHedge-Event");
+    }
+
+    // 策略核心定时任务调度器 (平盘执行、追单执行专属)
+    @Bean(name = "strategyEngineTaskScheduler")
+    public ThreadPoolTaskScheduler strategyEngineTaskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(4); // 足够应对几十个策略实例的轻量级调度
+        scheduler.setThreadNamePrefix("Strategy-Timer-");
+        scheduler.initialize();
+        return scheduler;
     }
 }

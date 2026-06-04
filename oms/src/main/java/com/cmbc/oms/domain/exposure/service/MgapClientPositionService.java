@@ -59,6 +59,15 @@ public class MgapClientPositionService {
     @Autowired
     private BasicParamCacheManager basicParamCacheManager;
 
+    @Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("mgapPollingTaskScheduler")
+    private org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler mgapPollingTaskScheduler;
+
+    @javax.annotation.PostConstruct
+    public void init() {
+        mgapPollingTaskScheduler.scheduleWithFixedDelay(this::syncMgapPosition, 1000);
+    }
+
     private final List<com.cmbc.oms.domain.facade.MgapPositionUpdateListener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public void registerListener(com.cmbc.oms.domain.facade.MgapPositionUpdateListener listener) {
@@ -77,7 +86,6 @@ public class MgapClientPositionService {
     // private Map<String, GoldPrice> priceCache = new HashMap<>(); // 行情数据缓存
 
     // 定时从积存金系统查询客盘头寸
-    @Scheduled(fixedDelay = 1000)
     public void syncMgapPosition() {
         try {
             if (isCircuitOpen) {
@@ -163,11 +171,13 @@ public class MgapClientPositionService {
      */
     public StrategyPosition buildStrategyPositionView() {
         if (CollectionUtils.isEmpty(this.mgapPositionCache)) {
+            logger.error("积存金客盘数据为空！！");
             return null;
         }
-
+        //客盘数据汇总
         BigDecimal clientPosition = BigDecimal.ZERO;
-        BigDecimal mgapPosition = BigDecimal.ZERO;
+        //积存金同步过来的平盘头寸（非量化平盘）
+        BigDecimal mgapHedgedPosition = BigDecimal.ZERO;
         String positionUpdateTime = null;
 
         for (Map.Entry<String, MgapPositionSnapshot> entry : this.mgapPositionCache.entrySet()) {
@@ -176,15 +186,13 @@ public class MgapClientPositionService {
 
             if ("PGCRMB".equals(key)) {
                 clientPosition = clientPosition.add(value.getQty());
-                mgapPosition = mgapPosition.add(value.getQty());
             } else if ("KAURMB".equals(key)) {
                 clientPosition = clientPosition.add(value.getQty());
-                mgapPosition = mgapPosition.add(value.getQty());
                 positionUpdateTime = value.getPositionTime();
             } else if ("AURMB".equals(key)) {
-                mgapPosition = mgapPosition.add(value.getQty());
+                mgapHedgedPosition = mgapHedgedPosition.add(value.getQty());
             } else if ("XAUUSD".equals(key)) {
-                mgapPosition = mgapPosition.add(value.getQty().multiply(BaseConstants.OUNCE_GRAM)).setScale(4, RoundingMode.HALF_UP);
+                mgapHedgedPosition = mgapHedgedPosition.add(value.getQty().multiply(BaseConstants.OUNCE_GRAM)).setScale(4, RoundingMode.HALF_UP);
             }
         }
 
@@ -194,11 +202,8 @@ public class MgapClientPositionService {
 
         StrategyPosition strategyPosition = new StrategyPosition();
         strategyPosition.setMgapClientPosition(clientPosition);
-        strategyPosition.setMgapClientPositionTime(positionUpdateTime);
         strategyPosition.setUpdateTime(positionUpdateTime);
-        strategyPosition.setMgapNetPosition(mgapPosition);
-        strategyPosition.setMgapClientPositionTime(positionUpdateTime); //todo
-
+        strategyPosition.setMgapHedgedPosition(mgapHedgedPosition);
 
         PositionSnapshot quantPosition = quantPositionManager.getTotalPosition("MgapHedge");
         BigDecimal hedgedPosition = quantPosition.getNetWeight();

@@ -26,7 +26,7 @@ import javax.annotation.PreDestroy;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import com.cmbc.oms.util.concurrent.ShardingThreadPool;
+import com.cmbc.common.util.concurrent.ShardingThreadPool;
 
 @Service
 @Slf4j
@@ -58,7 +58,8 @@ public class HedgeStrategyManager implements ExecutionReportListener, com.cmbc.o
     private ExceptionNotificationService exceptionNotificationService;
 
     @Autowired
-    private TaskScheduler taskScheduler; // Spring提供的线程池调度器
+    @org.springframework.beans.factory.annotation.Qualifier("strategyEngineTaskScheduler")
+    private TaskScheduler strategyEngineTaskScheduler; // 策略核心定时任务专属调度器
 
     @Autowired
     private StrategyConfigLoader configLoader;
@@ -72,7 +73,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, com.cmbc.o
 
     @Autowired
     @org.springframework.beans.factory.annotation.Qualifier("goldHedgeEventPool")
-    private com.cmbc.oms.util.concurrent.ShardingThreadPool goldHedgeEventPool;
+    private com.cmbc.common.util.concurrent.ShardingThreadPool goldHedgeEventPool;
 
     @PostConstruct
     public void init() {
@@ -126,7 +127,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, com.cmbc.o
         goldHedgeIoExecutor.execute(() -> {
             // 1. 策略交互上下文初始化
             StrategyContext context = new StrategyContext();
-            context.setTaskScheduler(taskScheduler);
+            context.setTaskScheduler(strategyEngineTaskScheduler);
             context.setMarketDataService(marketDataService);
             context.setOmsService(omsService);
             context.setPositionService(positionService);
