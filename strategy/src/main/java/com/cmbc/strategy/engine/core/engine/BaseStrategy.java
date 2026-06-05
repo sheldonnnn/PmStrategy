@@ -1,7 +1,7 @@
 package com.cmbc.strategy.engine.core.engine;
 
 import com.cmbc.oms.controller.dto.StrategyOrder;
-import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
 import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
 import com.cmbc.oms.domain.order.model.NewOrder;
 import com.cmbc.strategy.domain.model.config.StrategyConfig;
@@ -99,7 +99,7 @@ public abstract class BaseStrategy<T extends StrategyConfig> implements IStrateg
 //        return new Depth();
 //    }
 
-    protected StrategyPosition getClientPosition() {
+    protected HedgePositionSummary getClientPosition() {
         return strategyContext.getPositionService().getMgapPositionSummary();
     }
 

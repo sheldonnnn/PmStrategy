@@ -2,7 +2,7 @@ package com.cmbc.strategy.engine.mgaphedge.instance;
 
 import com.cmbc.oms.constant.BaseConstants;
 import com.cmbc.oms.controller.dto.StrategyOrder;
-import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
 import com.cmbc.oms.domain.order.model.ExecutionReport;
 import com.cmbc.strategy.constant.*;
 import com.cmbc.strategy.domain.dto.ClientMemberInfo;
@@ -65,7 +65,8 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
     @Override
     public void start() {
         // 1. 初始化
-        HedgeStrategyInstanceEntity entity = new HedgeStrategyInstanceEntity();
+        HedgePositionSummary position = getClientPosition();
+        HedgeStrategyInstanceEntity entity = new HedgeStrategyInstanceEntity(instanceId, config, position);
         strategyContext.getGoldHedgeStrategyInstanceService().insertStrategyInstanceStatus(entity);
         log.info("[{}] HedgeStrategy is starting...", instanceId);
 
@@ -96,13 +97,41 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
         status.set(StrategyStatus.STOPPED);
 
         // 1. 停止业务调度定时任务（切断源头，不再产生新订单）
-        stopTask(monitoringTaskHandle);
         stopTask(executionTaskHandle);
         stopTask(chaseTaskHandle);
         stopTask(strategyMonitorPushTask); // 移至自旋前，提早切断定时推送
 
         // 2. 撤销市场上有效订单
         cancelAllOrders();
+        // 3.2 记录终态快照和成交汇总数据
+        HedgeStrategyInstanceEntity entity = new HedgeStrategyInstanceEntity();
+        entity.setInstanceId(instanceId);
+        entity.setStatus(StrategyStatus.STOPPED.getCode());
+        entity.setUpdateTime(new java.util.Date());
+        entity.setEndTime(new java.util.Date());
+        entity.setFinalPosition(getClientPosition());
+
+        BigDecimal cumQty = BigDecimal.ZERO;
+        BigDecimal cumAmount = BigDecimal.ZERO;
+        for (com.cmbc.strategy.domain.model.StrategyStatSummary summary : HEDGE_STRATEGY_MAP.values()) {
+            if (summary.getCumQty() != null) {
+                cumQty = cumQty.add(summary.getCumQty());
+            }
+            if (summary.getCumAmount() != null) {
+                cumAmount = cumAmount.add(summary.getCumAmount());
+            }
+        }
+        entity.setCumQty(cumQty);
+        entity.setCumAmount(cumAmount);
+
+        if (strategyContext.getGoldHedgeIoExecutor() != null) {
+            strategyContext.getGoldHedgeIoExecutor().execute(() -> {
+                // 使用新的快照更新接口
+                strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceSnapshot(entity);
+            });
+        } else {
+            strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceSnapshot(entity);
+        }
 
         // 3. 异步延时执行彻底停机逻辑（自旋等待撤单回执）
         new Thread(() -> {
@@ -130,8 +159,6 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
                 // 3.1 趁着推送任务还没关，执行最后一次终态数据推送
                 pushStrategyMonitorInfo();
 
-                // 3.2 真正更新状态到持久化服务（触发前端关闭 WS）
-                updateStatusAsync();
             } catch (Exception e) {
                 log.error("[{}] 异步停机处理过程发生异常", instanceId, e);
                 pushExceptionInfo(3, "策略停止处理异常！！！");
@@ -304,7 +331,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
 
         try {
             // 获取最新持仓
-            StrategyPosition positionSummary = getClientPosition();
+            HedgePositionSummary positionSummary = getClientPosition();
             if (positionSummary == null) {
                 log.warn("[{}] 获取前端头寸数据为空，直接停止策略运行...", instanceId);
                 pushExceptionInfo(3, "获取前端头寸数据为空，已触发自动停机！");
@@ -353,7 +380,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
             }
             long timeOutMs = config.getHedgingMaxTime().multiply(BigDecimal.valueOf(1000)).longValue();
 
-            StrategyPosition positionSummary = getClientPosition();
+            HedgePositionSummary positionSummary = getClientPosition();
             if (positionSummary == null) {
                 stop("头寸数据为空，停止策略！！");
                 return;
@@ -407,7 +434,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
             // 2. 超时检查逻辑
             long timeOutMs = config.getChaseMaxDuration().multiply(BigDecimal.valueOf(1000)).longValue();
 
-            StrategyPosition positionSummary = getClientPosition();
+            HedgePositionSummary positionSummary = getClientPosition();
             if (positionSummary == null) {
                 stop("头寸数据为空，停止策略！！");
                 return;
@@ -453,7 +480,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> {
      */
     private void pushStrategyMonitorInfo() {
         try {
-            StrategyPosition positionSummary = getClientPosition();
+            HedgePositionSummary positionSummary = getClientPosition();
             PloyPrices ployPrice;
             // 直接读取当前生效的 timeSlice，避免触发撤单、停机等包含副作用的方法
             SymbolTimeSlice activeSymbolSlice = this.activeTimeSlice;

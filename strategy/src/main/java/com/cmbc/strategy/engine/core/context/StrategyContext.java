@@ -2,6 +2,8 @@ package com.cmbc.strategy.engine.core.context;
 
 import com.cmbc.oms.domain.exception.ExceptionNotificationService;
 import com.cmbc.oms.facade.strategy.OmsService;
+import com.cmbc.strategy.integration.IHedgeStrategyPersistService;
+import com.cmbc.strategy.integration.IHedgeStrategyWebSocketService;
 import com.cmbc.strategy.integration.IMarketDataService;
 import com.cmbc.strategy.integration.IPositionService;
 import lombok.Data;
@@ -20,9 +22,9 @@ public class StrategyContext {
 
     private ExceptionNotificationService exceptionNotificationService;
 
-    private IGoldHedgeStrategyWebSocketService goldHedgeStrategyWebSocketService;
+    private IHedgeStrategyPersistService goldHedgeStrategyInstanceService;
 
-    private IGoldHedgeStrategyInstanceService goldHedgeStrategyInstanceService;
+    private IHedgeStrategyWebSocketService goldHedgeStrategyWebSocketService;
 
     private KsdStaticQuoteCacheService ksdStaticQuoteCacheService;
 

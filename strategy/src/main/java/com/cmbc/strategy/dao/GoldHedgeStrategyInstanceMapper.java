@@ -23,6 +23,9 @@ public interface GoldHedgeStrategyInstanceMapper {
             @Param(value = "reason") String reason
     );
 
+    // 停机时更新策略实例的结束时间、最终快照及成交汇总数据
+    void updateInstanceSnapshot(HedgeStrategyInstanceEntity entity);
+
     // 根据条件查询实例数据
     List<HedgeStrategyInstanceEntity> queryInstance(HedgeStrategyInstanceEntity entity);
 

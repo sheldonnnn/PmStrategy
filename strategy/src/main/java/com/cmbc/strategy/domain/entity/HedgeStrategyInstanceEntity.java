@@ -1,13 +1,11 @@
 package com.cmbc.strategy.domain.entity;
 
-import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
 import com.cmbc.strategy.constant.StrategyStatus;
 import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import lombok.Data;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.alibaba.fastjson.JSON;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.util.CollectionUtils;
 
@@ -34,20 +32,24 @@ public class HedgeStrategyInstanceEntity {
         private String createBy;        // 创建者
         private String updateBy;        // 更新者
 
-        private Date createDate;
-        private Date updateDate;
+        private Date createTime;
+        private Date updateTime;
 
         private String traderNo;        // 交易员
         private String remark;          // 备注
         private String delFlag;         // 删除标志 (0代表存在 1代表删除)
 
-        private BigDecimal hedgedPositionSnap;
-        private BigDecimal clientPositionSnap;
+
+        private Date endTime;
+        private String initialPositionSnap;
+        private String finalPositionSnap;
+        private BigDecimal cumQty;
+        private BigDecimal cumAmount;
 
         public HedgeStrategyInstanceEntity() {
         }
 
-        public HedgeStrategyInstanceEntity(String instanceId, HedgeStrategyConfig config, StrategyPosition positionSummary) {
+        public HedgeStrategyInstanceEntity(String instanceId, HedgeStrategyConfig config, HedgePositionSummary positionSummary) {
                 if (StringUtils.isEmpty(instanceId) || config == null) {
                         return;
                 }
@@ -82,16 +84,25 @@ public class HedgeStrategyInstanceEntity {
 
                 // 设置时间
                 Date now = new Date();
-                this.createDate = now;
-                this.updateDate = now;
+                this.createTime = now;
+                this.updateTime = now;
 
                 this.traderNo = config.getTraderNo();
                 this.remark = "";
 
                 // 记录持仓快照
                 if (positionSummary != null) {
-                        this.clientPositionSnap = positionSummary.getHedgedNetPosition();
-                        this.hedgedPositionSnap = positionSummary.getMgapNetPosition();
+                        this.setInitialPosition(positionSummary);
                 }
+        }
+
+        public void setInitialPosition(HedgePositionSummary pos) {
+                if (pos == null) return;
+                this.initialPositionSnap = JSON.toJSONString(pos);
+        }
+
+        public void setFinalPosition(HedgePositionSummary pos) {
+                if (pos == null) return;
+                this.finalPositionSnap = JSON.toJSONString(pos);
         }
 }

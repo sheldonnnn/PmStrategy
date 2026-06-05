@@ -5,7 +5,7 @@ import lombok.Data;
 import java.math.BigDecimal;
 
 @Data
-public class StrategyPosition {
+public class HedgePositionSummary {
     // 积存金系统同步过来的平盘数据（非量化平盘）
     private BigDecimal mgapHedgedPosition;
     private BigDecimal hedgedNetPosition;

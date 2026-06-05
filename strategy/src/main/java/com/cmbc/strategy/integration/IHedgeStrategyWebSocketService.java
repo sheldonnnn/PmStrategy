@@ -1,7 +1,7 @@
 package com.cmbc.strategy.integration;
 
 import com.cmbc.mds.distribution.PloyPrices;
-import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
 import com.cmbc.oms.domain.order.model.NewOrder;
 import com.cmbc.strategy.domain.model.StrategyStatSummary;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
@@ -22,7 +22,7 @@ public interface IHedgeStrategyWebSocketService {
             String userName,
             String instanceId,
             Map<String, StrategyStatSummary> map,
-            StrategyPosition position,
+            HedgePositionSummary position,
             SymbolTimeSlice activeTimeSlice,
             List<NewOrder> newOrderList,
             PloyPrices onshorePloyPrice,
@@ -41,7 +41,7 @@ public interface IHedgeStrategyWebSocketService {
             String userName,
             String instanceId,
             Map<String, StrategyStatSummary> map,
-            StrategyPosition position,
+            HedgePositionSummary position,
             SymbolTimeSlice activeTimeSlice,
             List<NewOrder> newOrderList,
             PloyPrices onshorePloyPrice,

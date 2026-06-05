@@ -1,6 +1,6 @@
 package com.cmbc.strategy.integration.impl;
 
-import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
 import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
 import com.cmbc.oms.domain.exposure.service.QuantPositionManager;
 import com.cmbc.oms.domain.exposure.service.MgapClientPositionService;
@@ -23,8 +23,8 @@ public class PositionService implements IPositionService {
     private QuantPositionManager quantPositionManager;
 
     @Override
-    public StrategyPosition getMgapPositionSummary() {
-        return mgapClientPositionService.buildStrategyPositionView();
+    public HedgePositionSummary getMgapPositionSummary() {
+        return mgapClientPositionService.buildHedgePositionSummaryView();
     }
 
     @Override

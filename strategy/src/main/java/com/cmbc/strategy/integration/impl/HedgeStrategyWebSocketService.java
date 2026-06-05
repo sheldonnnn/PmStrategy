@@ -2,11 +2,13 @@ package com.cmbc.strategy.integration.impl;
 
 import com.alibaba.fastjson.JSONObject;
 import com.cmbc.mds.distribution.PloyPrices;
-import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
 import com.cmbc.oms.domain.order.model.NewOrder;
+import com.cmbc.strategy.constant.StrategyStatus;
 import com.cmbc.strategy.domain.model.StrategyStatSummary;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import com.cmbc.strategy.domain.model.hedge.GoldHedgeStrategyBean;
+import com.cmbc.strategy.domain.model.hedge.GoldHedgeStrategyRunStatus;
 import com.cmbc.strategy.domain.model.hedge.GoldStrategyBean;
 import com.cmbc.strategy.integration.IHedgeStrategyWebSocketService;
 import org.slf4j.Logger;
@@ -38,7 +40,7 @@ public class HedgeStrategyWebSocketService implements IHedgeStrategyWebSocketSer
     private SimpMessagingTemplate messagingTemplate;
 
     @Override
-    public void sendGoldHedgeStrategyMap(String userName, String instanceId, Map<String, StrategyStatSummary> hdegeStrategyMap, StrategyPosition positionSummary, SymbolTimeSlice activeTimeSlice, List<NewOrder> newOrderList, PloyPrices ployPrice, Integer chaseNumber) {
+    public void sendGoldHedgeStrategyMap(String userName, String instanceId, Map<String, StrategyStatSummary> hdegeStrategyMap, HedgePositionSummary positionSummary, SymbolTimeSlice activeTimeSlice, List<NewOrder> newOrderList, PloyPrices ployPrice, Integer chaseNumber) {
         GoldStrategyBean goldStrategyBean = this.getGoldHedgeStrategyInstanceInfo(userName, instanceId, hdegeStrategyMap, positionSummary, activeTimeSlice, newOrderList, ployPrice, chaseNumber);
         log.debug("发送策略运行数据:{}", JSONObject.toJSONString(goldStrategyBean));
         // todo 3.// 消息发送到指定用户
@@ -47,7 +49,7 @@ public class HedgeStrategyWebSocketService implements IHedgeStrategyWebSocketSer
     }
 
     @Override
-    public GoldStrategyBean getGoldHedgeStrategyInstanceInfo(String userName, String instanceId, Map<String, StrategyStatSummary> hdegeStrategyMap, StrategyPosition positionSummary, SymbolTimeSlice activeTimeSlice, List<NewOrder> newOrderList, PloyPrices ployPrice, Integer chaseNumber) {
+    public GoldStrategyBean getGoldHedgeStrategyInstanceInfo(String userName, String instanceId, Map<String, StrategyStatSummary> hdegeStrategyMap, HedgePositionSummary positionSummary, SymbolTimeSlice activeTimeSlice, List<NewOrder> newOrderList, PloyPrices ployPrice, Integer chaseNumber) {
         if(StringUtils.isEmpty(instanceId)){
             return null;
         }

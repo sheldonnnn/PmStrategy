@@ -17,7 +17,7 @@ import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
 import com.cmbc.oms.domain.exposure.dto.MgapPosResponse;
 import com.cmbc.oms.domain.exposure.dto.MgapPositionSnapshot;
 import com.cmbc.oms.domain.exposure.dto.PositionDataResponse;
-import com.cmbc.oms.domain.exposure.dto.StrategyPosition;
+import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
 import com.cmbc.oms.domain.exposure.model.PositionSummary;
 
 import com.cmbc.oms.domain.exposure.vo.PositionVo;
@@ -169,7 +169,7 @@ public class MgapClientPositionService {
     /**
      * 专门提供给量化策略极速获取所需的头寸视图（跳过前端不必要的汇总与汇率逻辑）
      */
-    public StrategyPosition buildStrategyPositionView() {
+    public HedgePositionSummary buildHedgePositionSummaryView() {
         if (CollectionUtils.isEmpty(this.mgapPositionCache)) {
             logger.error("积存金客盘数据为空！！");
             return null;
@@ -200,7 +200,7 @@ public class MgapClientPositionService {
             return null;
         }
 
-        StrategyPosition strategyPosition = new StrategyPosition();
+        HedgePositionSummary strategyPosition = new HedgePositionSummary();
         strategyPosition.setMgapClientPosition(clientPosition);
         strategyPosition.setUpdateTime(positionUpdateTime);
         strategyPosition.setMgapHedgedPosition(mgapHedgedPosition);
