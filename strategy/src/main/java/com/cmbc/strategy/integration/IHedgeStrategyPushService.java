@@ -13,12 +13,12 @@ import java.util.Map;
 /**
  * 策略WebSocket服务接口
  */
-public interface IHedgeStrategyWebSocketService {
+public interface IHedgeStrategyPushService {
 
     /**
      * 发送策略运行信息
      */
-    void sendGoldHedgeStrategyMap(
+    void pushStrategyStats(
             String userName,
             String instanceId,
             Map<String, StrategyStatSummary> map,
@@ -61,5 +61,5 @@ public interface IHedgeStrategyWebSocketService {
     /**
      * 发送策略运行状态变更信息
      */
-    void sendGoldHedgeStrategyStatus(String userName, String instanceId, String status, String message);
+    void pushStrategyStatus(String userName, String instanceId, String status, String message);
 }

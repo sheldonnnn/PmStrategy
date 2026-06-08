@@ -10,7 +10,7 @@ import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import com.cmbc.strategy.domain.model.hedge.GoldHedgeStrategyBean;
 import com.cmbc.strategy.domain.model.hedge.GoldHedgeStrategyRunStatus;
 import com.cmbc.strategy.domain.model.hedge.GoldStrategyBean;
-import com.cmbc.strategy.integration.IHedgeStrategyWebSocketService;
+import com.cmbc.strategy.integration.IHedgeStrategyPushService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,9 +26,9 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-public class HedgeStrategyWebSocketService implements IHedgeStrategyWebSocketService {
+public class HedgeStrategyPushServiceImpl implements IHedgeStrategyPushService {
 
-    private static final Logger log = LoggerFactory.getLogger(HedgeStrategyWebSocketService.class);
+    private static final Logger log = LoggerFactory.getLogger(HedgeStrategyPushServiceImpl.class);
 
     // 发送策略事务信息
     private static final String SEND_GOLD_STRATEGY_INFO = "/strategy/data"; // 路径为 /user/czz/strategy/data
@@ -40,7 +40,7 @@ public class HedgeStrategyWebSocketService implements IHedgeStrategyWebSocketSer
     private SimpMessagingTemplate messagingTemplate;
 
     @Override
-    public void sendGoldHedgeStrategyMap(String userName, String instanceId, Map<String, StrategyStatSummary> hdegeStrategyMap, HedgePositionSummary positionSummary, SymbolTimeSlice activeTimeSlice, List<NewOrder> newOrderList, PloyPrices ployPrice, Integer chaseNumber) {
+    public void pushStrategyStats(String userName, String instanceId, Map<String, StrategyStatSummary> hdegeStrategyMap, HedgePositionSummary positionSummary, SymbolTimeSlice activeTimeSlice, List<NewOrder> newOrderList, PloyPrices ployPrice, Integer chaseNumber) {
         GoldStrategyBean goldStrategyBean = this.getGoldHedgeStrategyInstanceInfo(userName, instanceId, hdegeStrategyMap, positionSummary, activeTimeSlice, newOrderList, ployPrice, chaseNumber);
         log.debug("发送策略运行数据:{}", JSONObject.toJSONString(goldStrategyBean));
         // todo 3.// 消息发送到指定用户
@@ -224,7 +224,7 @@ public class HedgeStrategyWebSocketService implements IHedgeStrategyWebSocketSer
      * @param status
      */
     @Override
-    public void sendGoldHedgeStrategyStatus(String userName, String instanceId, String status, String message) {
+    public void pushStrategyStatus(String userName, String instanceId, String status, String message) {
         // 参数校验
         if (StringUtils.isEmpty(userName) || StringUtils.isEmpty(instanceId) || StringUtils.isEmpty(status)) {
             log.info("存在参数为空:userName:{},instanceId:{},status:{}", userName, instanceId, status);
