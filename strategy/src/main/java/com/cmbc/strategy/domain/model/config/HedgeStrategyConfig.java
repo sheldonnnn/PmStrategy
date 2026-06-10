@@ -59,6 +59,8 @@ public class HedgeStrategyConfig extends StrategyConfig {
     private String exchId;
     private String counterParty;
     private String fxSymbol;
+    private BigDecimal maxSpread;
+    private BigDecimal maxVolumn;
 
     /**
      * 分时段平盘规则列表

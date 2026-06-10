@@ -1,6 +1,8 @@
 package com.cmbc.strategy.domain.dto;
 
 import lombok.Data;
+
+import java.math.BigDecimal;
 import java.util.Map;
 
 /**
@@ -28,6 +30,7 @@ public class HedgeStrategyRequest {
     private String exchId;          // 交易源
 
     private String counterParty;    // 交易对手方
+    private BigDecimal maxVolumn;
 
     private Map<String, ClientMemberInfo> clientMemberInfo;
 

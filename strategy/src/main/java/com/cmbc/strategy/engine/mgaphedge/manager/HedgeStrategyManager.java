@@ -149,6 +149,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, com.cmbc.o
             config.setTraderNo(request.getTraderNo());
             config.setExchId(request.getExchId());
             config.setCounterParty(request.getCounterParty());
+            config.setMaxVolumn(request.getMaxVolumn());
 
             log.info("Load strategy config--{}", config);
 
