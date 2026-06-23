@@ -16,7 +16,6 @@ import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import com.cmbc.strategy.engine.context.StrategyContext;
 import com.cmbc.strategy.engine.core.timer.StrategyEvent;
-import com.cmbc.strategy.engine.core.timer.StrategyEventListener;
 import com.cmbc.strategy.engine.hedge.event.HedgeTimeSliceEvent;
 import com.cmbc.strategy.engine.core.engine.BaseStrategy;
 import com.cmbc.strategy.engine.hedge.trigger.HedgeTrigger;
@@ -30,7 +29,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -40,7 +38,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 套利策略实例实现类
  */
 @Slf4j
-public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> implements StrategyEventListener<HedgeTimeSliceEvent> {
+public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> implements com.cmbc.strategy.engine.core.timer.StrategyEventListener<HedgeTimeSliceEvent> {
 
     // === 内部变量与组件 ===
     private final Map<String, StrategyStatSummary> HEDGE_STRATEGY_MAP = new ConcurrentHashMap<>();
@@ -67,15 +65,15 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         this.triggerEvaluator = triggerEvaluator;
         this.status.set(StrategyStatus.CREATED);
     }
-    // ================= 生命钩子实现 =================
+
+    // ============================== 生命周期实现 ==============================
 
     @Override
     public void start() {
         // 1. 初始化
-        // 初始化实例实体
-        HedgeStrategyInstanceEntity hedgeStrategyInstanceEntity =
-                new HedgeStrategyInstanceEntity(instanceId, config, getHedgePositionSummary());
-        strategyContext.getHedgeStrategyInstanceService().insertStrategyInstanceStatus(hedgeStrategyInstanceEntity);
+        HedgePositionSummary position = getClientPosition();
+        HedgeStrategyInstanceEntity entity = new HedgeStrategyInstanceEntity(instanceId, config, position);
+        strategyContext.getHedgeStrategyInstanceService().saveInstance(entity);
         log.info("[{}] HedgeStrategy is starting...", instanceId);
 
         // 初始化全局变量缓存
@@ -92,148 +90,112 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         // 注册定时任务
         // 注册定时任务
         registerTimeSlices();
+
         List<SubscribeRequest> subReqs = collectSubscriptions(config.getCounterParty(), config.getExchId());
         this.subscribe(subReqs, config.getUserId());
-        // 注册
+
+        // 2. 启动“监控模式”
         startMonitoringPhase();
-        // 启动定时监控运行状态
-        this.strategyMonitorTaskHandle = schedule(this::pushStrategyMonitorInfo, 1000);
+
+        // 3. 策略行情信息定时推送
+        this.strategyMonitorPushTask = schedule(this::pushStrategyMonitorInfo, 1000L);
     }
 
     @Override
     public void stop(String reason) {
-        // 取消订阅
-        log.info("[{}] HedgeStrategy is stopping... reason:{}", instanceId, reason);
+        log.info("[{}] HedgeStrategy is Stopping, reason: {}", instanceId, reason);
         status.set(StrategyStatus.STOPPED);
 
-        // 1.停止所有内部定时任务
+        // 1. 停止业务调度定时任务（切断源头，不再产生新订单）
         stopTask(executionTaskHandle);
         stopTask(chaseTaskHandle);
-        stopTask(strategyMonitorTaskHandle);
-        // 2. 取消所有未成交的订单
-        cancelAllOrders();
+        stopTask(strategyMonitorPushTask); // 移至自旋前，提早切断定时推送
 
+        // 清理时间切片相关的定时任务
+        strategyContext.getStrategyTimerService().clearTimeTasks(instanceId);
+
+        // 2. 撤销市场上有效订单
+        cancelAllOrders();
+        // 3.2 记录终态快照和成交汇总数据
         HedgeStrategyInstanceEntity entity = new HedgeStrategyInstanceEntity();
         entity.setInstanceId(instanceId);
-        entity.setStatusCode(StrategyStatus.STOPPED.getCode());
-        entity.setUpdateBy(config.getUserId());
-        entity.setRemark(reason);
-        Date now = new Date();
-        entity.setUpdateTime(now);
-        entity.setEndTime(now);
-        entity.setFinalPositionSnapshot(getHedgePositionSummary());
-        BigDecimal cumWeight = BigDecimal.ZERO;
+        entity.setStatus(StrategyStatus.STOPPED.getCode());
+        entity.setUpdateTime(new java.util.Date());
+        entity.setEndTime(new java.util.Date());
+        entity.setFinalPosition(getClientPosition());
+
+        BigDecimal cumQty = BigDecimal.ZERO;
         BigDecimal cumAmount = BigDecimal.ZERO;
-        // 更新统计数据 (已平重量= 所有平盘单成交重量之和)
-        for (StrategyStatSummary strategyStatSummary : HEDGE_STRATEGY_MAP.values()) {
-            if (strategyStatSummary.getCumWeight() != null) {
-                cumWeight = cumWeight.add(strategyStatSummary.getCumWeight());
+        for (com.cmbc.strategy.domain.model.StrategyStatSummary summary : HEDGE_STRATEGY_MAP.values()) {
+            if (summary.getCumQty() != null) {
+                cumQty = cumQty.add(summary.getCumQty());
             }
-            if (strategyStatSummary.getCumAmount() != null) {
-                cumAmount = cumAmount.add(strategyStatSummary.getCumAmount());
+            if (summary.getCumAmount() != null) {
+                cumAmount = cumAmount.add(summary.getCumAmount());
             }
         }
-        entity.setCumQty(cumWeight);
+        entity.setCumQty(cumQty);
         entity.setCumAmount(cumAmount);
-        // 更新策略实例状态为结束管理
-        strategyContext.getHedgeStrategyInstanceService().updateInstanceSnapshot(entity);
 
-        // 异步延迟10秒后停止逻辑，保证管理端能够打平订单显示
+        if (strategyContext.getGoldHedgeIoPool() != null) {
+            strategyContext.getGoldHedgeIoPool().execute(instanceId, () -> {
+                // 使用新的快照更新接口
+                strategyContext.getHedgeStrategyInstanceService().updateStrategyInstanceSnapshot(entity);
+            });
+        } else {
+            strategyContext.getHedgeStrategyInstanceService().updateStrategyInstanceSnapshot(entity);
+        }
+
+        // 3. 异步延时执行彻底停机逻辑（自旋等待撤单回执）
         new Thread(() -> {
             try {
-                // 等待撤单，最大等待3秒
-                int maxRetries = 6;
+                // 自旋判断，最大等待5秒，每0.5秒判断一次
+                int maxRetries = 10;
                 while (maxRetries > 0) {
-                    List<StrategyOrder> pendingOrders = this.getPendingOrder();
+                    java.util.List<?> pendingOrders = HedgeStrategyInstance.this.getPendingOrder();
                     if (pendingOrders == null || pendingOrders.isEmpty()) {
-                        log.info("[{}] 策略实例内部无未结订单,退出...", instanceId);
+                        log.info("[{}] 挂单已全部撤销完成，退出自旋等待。", instanceId);
                         break;
                     }
-                    log.info("[{}] 仍有未结订单，等待撤单中...剩余最大等待次数:{}", instanceId, maxRetries);
-                    Thread.sleep(500);
+                    log.info("[{}] 尚有未完成的撤单，自旋等待中... 剩余最大等待次数: {}", instanceId, maxRetries);
+                    java.util.concurrent.TimeUnit.MILLISECONDS.sleep(500);
                     maxRetries--;
                 }
+
                 if (maxRetries <= 0) {
-                    log.warn("[{}] 策略实例停止等待超时，强制执行停止逻辑!", instanceId);
+                    log.warn("[{}] 停机等待超时 (5S)，仍有未撤单或异常订单。强制执行停机逻辑！剩余挂单信息：{}", instanceId,
+                            HedgeStrategyInstance.this.getPendingOrder());
+//                    pushExceptionInfo(3, "策略停机等待超时(5秒)，已强制停机，请检查是否遗留未成挂单！");
                 }
+
+                log.info("[{}] 执行最终停机清理工作...", instanceId);
+                // 3.1 趁着推送任务还没关，执行最后一次终态数据推送
                 pushStrategyMonitorInfo();
+
             } catch (Exception e) {
-                reportException(e, "异步停止处理线程异常！！", instanceId);
+                reportException(3, "策略停止处理异常！！！", e);
             }
         }, "strategy-shutdown-" + instanceId).start();
     }
 
     @Override
     public void pause() {
-        // 校验合法性
-        // 确保只有在运行状态下才能暂停
+
+        // 确保运行状态下才能暂停
         if (isRunning()) {
-            if (status.compareAndSet(StrategyStatus.MONITOR, StrategyStatus.PAUSED)) {
-                // 1. 停止内部定时任务
+            if (status.compareAndSet(status.get(), StrategyStatus.PAUSED)) {
+                //
                 stopTask(executionTaskHandle);
-                stopTask(chaseTaskHandle);
-                // 确保没有执行任务
-                cancelAllOrders();
-                log.info("[{}] 当前策略中断停止指令，策略已中止(PAUSED).", instanceId);
+                updateStatusSync();
+                log.info("[{}] 收到管理端终止指令，策略已终止。", instanceId);
             }
         } else {
-            log.warn("[{}] 当前状态为{}，无法执行暂停...", instanceId, status.get());
+            log.warn("[{}] 当前状态为 {}, 无法执行暂停。", instanceId, status.get());
         }
     }
 
     @Override
     public void resume() {
-            // 校验合法性
-        if (status.get() == StrategyStatus.PAUSED) {
-            // 继续执行
-            log.info("[{}] 当前策略继续恢复中，正在恢复...", instanceId);
-            // 进入监控阶段
-            startMonitoringPhase();
-        } else {
-            log.warn("[{}] 当前状态为{}，无法执行恢复...", instanceId, status.get());
-        }
-    }
-
-    /**
-     * 提取订阅逻辑，不涉及业务逻辑
-     */
-    private List<SubscribeRequest> collectSubscriptions(String counterParty, String exchId) {
-        List<SubscribeRequest> subscribeRequests = new ArrayList<>();
-
-        if (config.getSymbolTimeSlices() != null) {
-            for (SymbolTimeSlice slice : config.getSymbolTimeSlices()) {
-                // 提取币对
-                if (slice.getSymbol() == null) continue;
-
-                // 订阅请求
-                SubscribeRequest req = new SubscribeRequest();
-                req.setSymbol(slice.getSymbol());
-                if (BaseConstants.DOMESTIC_TYPE_INNER.equals(slice.getDomesticType())) {
-                    req.setCounterParty(BaseConstants.SERVICE_NAME_DIMPLE);
-                    req.setExchId(BaseConstants.SERVICE_NAME_DIMPLE);
-                } else {
-                    // 境外合约转换
-                    req.setCounterParty(counterParty);
-                    req.setExchId(exchId);
-                }
-                subscribeRequests.add(req);
-            }
-        }
-        // 汇率的额外订阅
-        SubscribeRequest req = new SubscribeRequest();
-        req.setSymbol(config.getSymbol());
-        req.setCounterParty(counterParty);
-        req.setExchId(exchId);
-        subscribeRequests.add(req);
-
-        return subscribeRequests;
-    }
-
-    // ================= 核心状态机逻辑 (衍生监控端) =================
-
-    /**
-     * 阶段一：自动监控平盘
-=======
         // 状态校验是否可暂停
         if (status.get() == StrategyStatus.PAUSED) {
             log.info("[{}] 收到管理端恢复指令，正在恢复...", instanceId);
@@ -285,50 +247,47 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
 
     /**
      * 阶段一：启动监控任务
->>>>>>> 701de37 (feat: 定时器调度与线程池架构重构汇总)
      */
     private void startMonitoringPhase() {
         StrategyStatus currentStatus = status.get();
         if (!isRunning()) {
-            log.warn("[{}] 策略已经停止，拦截切换到 MONITOR 状态!", instanceId);
+            log.warn("[{}] 策略已停止或熔断，拒绝切换到 MONITOR 状态。", instanceId);
             return;
         }
+
         if (!attemptTransition(currentStatus, StrategyStatus.MONITOR)) {
-            log.error("[{}] 平盘监控状态切换失败，状态不匹配,当前状态:{}", instanceId, this.status);
+            log.error("[{}] 平盘监控切换失败：状态不满足，当前状态：{}", instanceId, this.status.get());
             return;
         }
         log.info("[{}] Switch to MONITOR phase.", instanceId);
-        // 开始平盘监控的逻辑，平盘监控
-        updateStatusAsync("进入平盘监控阶段");
-        stopTask(executionTaskHandle); // 确保互斥
-        stopTask(chaseTaskHandle);
-        runMonitoringLogic();
 
+        updateStatusSync();
+        stopTask(executionTaskHandle);
+        stopTask(chaseTaskHandle);
+
+        // 主动触发一次检查，避免错过恰好发生的事件
+        runMonitoringLogic();
     }
 
     /**
-     * 阶段二：自动平盘执行
+     * 阶段二：启动平盘逻辑
      */
     private void switchToExecution() {
         if (!attemptTransition(StrategyStatus.MONITOR, StrategyStatus.HEDGE)) {
-            log.error("[{}] 切换平盘执行失败，状态不匹配,当前状态:{}", instanceId, this.status);
+            log.error("[{}] 拒绝平盘触发：状态不满足，当前状态：{}", instanceId, this.status.get());
             return;
         }
-
-        updateStatusAsync("进入平盘执行阶段");
-        stopTask(strategyMonitorTaskHandle); // 确保互斥
-        log.info("[{}] 进入平盘执行阶段.", instanceId);
-        // 重置平盘执行状态,如超时时间,报价等
+        this.firstQuotePrice = null; // 新一轮平盘执行启动，清理旧的基准报价
+        updateStatusSync();
+        log.info("[{}] Switch to EXECUTION phase.", instanceId);
         this.hedgingStartTime = System.currentTimeMillis();
-        // 清空第一笔报价
-        this.firstQuotePrice = null;
 
-        // 执行平盘逻辑，每秒检查一遍是否平盘完
+        // 按照配置的时间间隔执行平盘逻辑
         this.executionTaskHandle = schedule(this::runExecutionLogic,
-                config.getOpIntervalSeconds().multiply(BigDecimal.valueOf(1000)).longValue());
+                config.getOrderIntervalSec().multiply(BigDecimal.valueOf(1000)).longValue());
 
-        // 如果触发马上平盘则取消循环执行直接调用
-        if (isRunning()) {
+        // 双重检查防并发泄露
+        if (!isRunning()) {
             stopTask(this.executionTaskHandle);
         }
     }
@@ -358,7 +317,8 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         // 追单阶段继续沿用之前的 firstQuotePrice，不清理基准价
         this.chaseStartTime = System.currentTimeMillis();
 
-        this.chaseTaskHandle = schedule(this::runChaseLogic, config.getOrderIntervalSec().multiply(BigDecimal.valueOf(1000)).longValue());
+        this.chaseTaskHandle = schedule(this::runChaseLogic,
+                config.getOrderIntervalSec().multiply(BigDecimal.valueOf(1000)).longValue());
 
         // 双重检查防并发泄露
         if (!isRunning()) {
@@ -366,13 +326,15 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         }
     }
 
+    /**
+     * 监控逻辑：检查是否触发平盘条件
+     */
     public void onPositionUpdateEvent() {
         if (status.get() == StrategyStatus.MONITOR) {
             runMonitoringLogic();
         }
     }
 
-    // 平盘监控
     private void runMonitoringLogic() {
         if (status.get() != StrategyStatus.MONITOR) {
             log.warn("[{}] 执行监控任务跳过：当前状态不是 MONITOR (Actual: {})", instanceId, status.get());
@@ -380,103 +342,94 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         }
 
         try {
-            // 1. 获取持仓数据（通过 SDK context)
-            HedgePositionSummary positionSummary = getHedgePositionSummary();
-            this.positionSnapshot = positionSummary;
+            // 获取最新持仓
+            HedgePositionSummary positionSummary = getClientPosition();
             if (positionSummary == null) {
-                reportExceptionAndStop(3, "持仓数据为空，停止策略！");
+                reportExceptionAndStop(3, "获取头寸数据为空，已触发自动停机！");
                 return;
             }
-            BigDecimal mgapClientPos = positionSummary.getMgapClientPosition();
-            BigDecimal mgapHedgedPos = positionSummary.getMgapHedgedPosition();
-            BigDecimal hedgedPos = positionSummary.getHedgedPosition();
+            BigDecimal clientPos = positionSummary.getMgapHedgedPosition().add(positionSummary.getMgapClientPosition());
+            BigDecimal hedgedPos = positionSummary.getFrozenNetPosition();
+            BigDecimal openPos = positionSummary.getHedgedNetPosition();
 
-            SymbolTimeSlice activeSymbolSlice = getOrRefreshActiveSlice();
-            // 当前激活币对为空，不再轮询，停止
+            SymbolTimeSlice activeSymbolSlice = this.activeTimeSlice;
             if (activeSymbolSlice == null) {
-                stop("没找到有效的可平盘合约,停止策略！");
                 return;
             }
 
-            // 2. 计算触发 (直接使用 config 中的阈值)
-            boolean signal = triggerEvaluator.evaluate(mgapClientPos, mgapHedgedPos, hedgedPos, activeSymbolSlice);
+            // 2.触发器校验
+            boolean signal = triggerEvaluator.evaluate(clientPos, hedgedPos, openPos, activeSymbolSlice);
 
+            // 3。触发切换
             if (signal) {
-                log.info("[{}] 平盘监控信号触发. (mgap客户头寸:{}, mgap已平头寸:{}, 策略已平头寸:{}, 触发阈值:{}, 触发差额:{})",
-                        instanceId, mgapClientPos, mgapHedgedPos, hedgedPos, activeSymbolSlice.getTriggerLongPosition(),
-                        mgapClientPos.subtract(mgapHedgedPos).abs());
-                // 进入平盘执行阶段
+                log.info("[{}] trigger hedging, current clientPos:{}, hedgedPos:{}, triggerLimit:{}",
+                        instanceId, clientPos, hedgedPos, activeSymbolSlice);
                 switchToExecution();
             }
         } catch (Exception e) {
-            reportExceptionAndStop(3, "平盘监控异常！", e);
+            reportException(3, "策略监控计算过程发生系统异常！", e);
         }
     }
 
     private void runExecutionLogic() {
-<<<<<<< HEAD
+
         try {
             if (status.get() != StrategyStatus.HEDGE) {
-                log.warn("[{}] 执行平盘逻辑，当前状态不是 HEDGE (Actual: {}).", instanceId, status.get());
+                log.warn("[{}] Start Hedging failed! Current status is not HEDGING (Actual: {})", instanceId,
+                        status.get());
                 if (!isRunning()) {
-                    stopTask(this.executionTaskHandle);
+                    stopTask(executionTaskHandle);
                 }
                 return;
             }
-
-            // 1. 获取当前时间片配置
+            // 1. 获取当前时间片配置与持仓
             SymbolTimeSlice currentSlice = this.activeTimeSlice;
             if (currentSlice == null) {
-                stop("没找到有效的可平盘合约,停止策略！");
                 return;
             }
+            long timeOutMs = config.getHedgingMaxTime().multiply(BigDecimal.valueOf(1000)).longValue();
 
-            // 2. 超时判断检查
-            long timeOutMs = config.getHedgeMaxTime().multiply(BigDecimal.valueOf(1000)).longValue();
-
-            HedgePositionSummary positionSummary = getHedgePositionSummary();
-            this.positionSnapshot = positionSummary;
+            HedgePositionSummary positionSummary = getClientPosition();
             if (positionSummary == null) {
-                reportExceptionAndStop(1, "持仓数据为空，停止策略！");
+                stop("头寸数据为空，停止策略！！");
                 return;
             }
-
-            BigDecimal clientPos = positionSummary.getMgapClientPosition();
-            BigDecimal mgapHedgedPos = positionSummary.getMgapHedgedPosition();
+            BigDecimal clientPos = positionSummary.getMgapClientPosition().add(positionSummary.getMgapHedgedPosition());
             BigDecimal openPos = positionSummary.getFrozenNetPosition();
-            BigDecimal hedgedPos = positionSummary.getHedgedPosition();
-            BigDecimal netPos = clientPos.add(hedgedPos).add(mgapHedgedPos);      // 头寸偏离敞口头寸
+            BigDecimal hedgedPos = positionSummary.getHedgedNetPosition();
 
-            long timeCost = System.currentTimeMillis() - hedgingStartTime;
-            // 如果平盘量大于0，并且超时
+            BigDecimal netPos = clientPos.add(hedgedPos);
+
+            // 敞口安全
             if (isGapSafe(netPos, currentSlice)) {
-                reportException(1, "敞口低于平盘容差，回到平盘监控。敞口:{}", netPos);
-                // 撤单并且回到平盘监控，并更新状态
-                if (attemptTransition(StrategyStatus.HEDGE, StrategyStatus.MONITOR)) {
-                    // 回到平盘监控，清空持仓
-                    cancelAllOrders(); // 撤销未成交的订单
-                    startMonitoringPhase(); // 重新启动监控
-                }
-            } else if (timeCost > timeOutMs) {
-                // 超时撤单，然后看当前状态进入追单
+                log.info("[{}] Position is safe. NetPos: {}", instanceId, netPos);
+
+                // 尝试转回监控或执行收尾
+                // if (attemptTransition(StrategyStatus.HEDGE, StrategyStatus.MONITOR)) {
+
                 cancelAllOrders();
-                reportException(1, "平盘执行超时({}ms > {}ms)，准备切换追单模式...", timeCost, timeOutMs);
+                startMonitoringPhase();
+                // }
+            } else if (System.currentTimeMillis() - hedgingStartTime > timeOutMs) {
+                // 超时处理：切换到追单阶段
+                log.info("[{}] 平盘执行超时，触发追单!", instanceId);
                 switchToChase();
             } else {
-                // // 执行下单
-                handleHedgingExecution(currentSlice, clientPos.add(mgapHedgedPos), hedgedPos, openPos, false);
+                // 继续执行平盘逻辑（下单逻辑在此封装）
+                handleHedgingExecution(currentSlice, positionSummary);
             }
         } catch (Exception e) {
-            reportExceptionAndStop(3, "平盘下发执行系统异常！", e);
+            updateStatusSync();
+            reportException(3, "平盘发单过程发生系统异常！", e);
         }
     }
 
     private void runChaseLogic() {
         try {
             if (status.get() != StrategyStatus.CHASE) {
-                log.warn("[{}] 执行追单逻辑，当前状态不是 CHASE (Actual: {}).", instanceId, status.get());
+                log.warn("[{}] 追单失败，当前非追单状态！（实际状态：{}）", instanceId, status.get());
                 if (!isRunning()) {
-                    stopTask(this.chaseTaskHandle);
+                    stopTask(chaseTaskHandle);
                 }
                 return;
             }
@@ -484,54 +437,47 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
             // 1. 获取当前时间片配置
             SymbolTimeSlice currentSlice = this.activeTimeSlice;
             if (currentSlice == null) {
-                log,warn("没找到有效的可平盘合约！");  // 停止策略 or 切换状态？
                 return;
             }
-
-            // 2. 超时判断检查
+            // 2. 超时检查逻辑
             long timeOutMs = config.getChaseMaxDuration().multiply(BigDecimal.valueOf(1000)).longValue();
 
-            HedgePositionSummary positionSummary = getHedgePositionSummary();
-            this.positionSnapshot = positionSummary;
+            HedgePositionSummary positionSummary = getClientPosition();
             if (positionSummary == null) {
-                reportExceptionAndStop(1, "持仓数据为空，停止策略！");
+                stop("头寸数据为空，停止策略！！");
                 return;
             }
-
-            BigDecimal clientPos = positionSummary.getMgapClientPosition();
-            BigDecimal mgapHedgedPos = positionSummary.getMgapHedgedPosition();
+            BigDecimal clientPos = positionSummary.getMgapHedgedPosition().add(positionSummary.getMgapClientPosition());
             BigDecimal openPos = positionSummary.getFrozenNetPosition();
-            BigDecimal hedgedPos = positionSummary.getHedgedPosition();
+            BigDecimal hedgedPos = positionSummary.getHedgedNetPosition();
 
-            BigDecimal netPos = clientPos.add(hedgedPos).add(mgapHedgedPos);      // 头寸偏离敞口头寸
-            long timeCost = System.currentTimeMillis() - chaseStartTime;
-
+            BigDecimal netPos = clientPos.add(hedgedPos); // 不包含挂单头寸
+            // === 分支 A：敞口安全，平盘结束 ===
             if (isGapSafe(netPos, currentSlice)) {
-                reportException(1, "追单阶段敞口头寸低于容差，敞口:{}", netPos);
-                if (attemptTransition(StrategyStatus.CHASE, StrategyStatus.MONITOR)) {
-                    // 回到平盘监控，清空持仓
-                    cancelAllOrders(); // 撤销未成交的订单
-                    reportException(1, "追单完毕完成，回到监控。 ({})", instanceId, netPos);
-                    startMonitoringPhase(); // 重新启动监控
-                }
-            } else if (timeCost > timeOutMs) {
-                // 追单超时，撤单继续追单
-                reportException(1, "追单执行超时({}ms > {}ms)，撤单重试追单...", timeCost, timeOutMs);
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendChaseTimeout(config.getUserId(), instanceId, timeCost);
-                cancelAllOrders(); // 撤销未成交的订单
-                chaseStartTime = System.currentTimeMillis();
-            } else if (config.getChaseNumber() <= chaseNumber) {
-                // 追单次数超限,发微信或者短信通知，同时停止策略（通知，不停止策略）
-                reportExceptionAndStop(1, "追单执行次数超限({}次 >= {}次)，停止策略！", chaseNumber, config.getChaseNumber());
-                // stop("追单执行次数超过配置的最多次数："+ chaseNumber +", 达到最大次数限制停止.");
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendHedgeStrategyStatus(config.getUserId(), this.instanceId, StrategyStatus.STOPPED.getCode());
+                log.info("[{}] Position is safe, NetPos: {}.", instanceId, netPos);
+                // 尝试流转：HEDGE -> MONITOR
+                // if (attemptTransition(StrategyStatus.HEDGE, StrategyStatus.MONITOR)) {
+                // cancelAllOrders(); // 撤销剩余挂单
+                startMonitoringPhase(); // 重启监控任务
+                // }
+            } else if (System.currentTimeMillis() - this.chaseStartTime > timeOutMs
+                    || chaseNumber >= config.getChaseNumber()) {
+                // // 分支B：判断是否超时
+                log.info("[{}] 追单执行超时或追单次数超出阈值（追单耗时：{}ms, 阈值：{}ms; 追单次数：{}，阈值：{}），停止策略！", instanceId,
+                        System.currentTimeMillis() - this.chaseStartTime, timeOutMs, chaseNumber,
+                        config.getChaseNumber());
+                // strategyContext.getHedgeStrategyPushService().pushStrategyStatus(config.getUserId(),
+                // this.instanceId, String.valueOf(this.status.get()));
+                stop("追单执行超时或追单次数超出阈值，停止策略！");
+                // //todo:i民生告警处理
             } else {
-                handleHedgingExecution(currentSlice, clientPos.add(mgapHedgedPos), hedgedPos, openPos, true);
-                // 统计追单次数
+                // // 分支C：执行下单逻辑
+                handleHedgingExecution(currentSlice, clientPos, hedgedPos, openPos, true);
+                // // 统计追单次数
                 chaseNumber += 1;
             }
         } catch (Exception e) {
-            reportExceptionAndStop(3, "追单下发执行系统异常！", e);
+            reportException(3, "追单过程发生系统异常！", e);
         }
     }
 
@@ -562,206 +508,182 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         }
     }
 
-    // ============================================
+    // ============================================================
+    // 3. 下单处理逻辑（分流与报价）
+    // ============================================================
 
-    // 1. 下发快速撤单 (只要没撤单，下发都会拒绝)
-    private void handleHedgingExecution(SymbolTimeSlice symbolSlice, BigDecimal mgapPos,
-                                        BigDecimal hedgedPos, BigDecimal openPos, boolean isChase) {
+    private void handleHedgingExecution(SymbolTimeSlice symbolSlice, BigDecimal mgapPos, BigDecimal hedgedPos, BigDecimal openPos, boolean isChase) {
 
-        // 在途订单敞口头寸 = 净头寸(加法)+在途敞口
+        // 包含挂单撤口的净头寸, 单位: g
         BigDecimal netPos = mgapPos.add(hedgedPos).add(openPos);
 
-        // 获取买卖方向
-        String side;
+        // // 1、确定买卖方向, 计算下单量
         BigDecimal orderWeight;
-        // 小于0 卖出 大于0买入
+        Side side;
         BigDecimal maxOrderQty = BigDecimal.ZERO;
-        BigDecimal limitPrice = BigDecimal.ZERO;
+        BigDecimal orderQty = BigDecimal.ZERO;
 
-        if (netPos.compareTo(BigDecimal.ZERO) < 0) {
-            orderWeight = netPos.subtract(symbolSlice.getEndLongPosition()); // 单位为g
+        if (netPos.compareTo(BigDecimal.ZERO) > 0) {
+            orderWeight = netPos.subtract(symbolSlice.getEndLongPosition()); // // 单位为g
             side = Side.SELL;
         } else {
-            orderWeight = symbolSlice.getEndShortPosition().subtract(netPos); // 单位为g
+            orderWeight = symbolSlice.getEndShortPosition().subtract(netPos); // // 默认endShortPosition < 0
             side = Side.BUY;
         }
 
         boolean isAbroad = BaseConstants.DOMESTIC_TYPE_OUTER.equalsIgnoreCase(symbolSlice.getDomesticType());
-        // 判断合约境内外
-        
-        // 境内合约计算下单量限制
+        BigDecimal unit;
+
+        // // 境内合约最大下单量控制
         if (!isAbroad) {
-            if (BusinessConstant.SM_FUTURES_EXCHANGE.equals(symbolSlice.getExchCode())) {
-                maxOrderQty = isChase ? config.getChaseMaxOrderQty() : config.getFutureMaxOrderQty();
+            if (BusinessConstant.SH_FUTURES_EXCHANGE.equals(symbolSlice.getExchCode())) { // // 期货合约
+                maxOrderQty = isChase ? config.getChaseFutureMaxOrderQty() : config.getFutureMaxOrderQty();
             } else {
-                maxOrderQty = isChase ? config.getSpotChaseMaxOrderQty() : config.getSpotMaxOrderQty();
+                maxOrderQty = isChase ? config.getChaseSpotMaxOrderQty() : config.getSpotMaxOrderQty();
             }
 
-            BigDecimal unit = symbolSlice.getUnit();
-            // 计算下单量，按 maxOrderQty(克)向下取整
-            if (orderWeight.compareTo(maxOrderQty) >= 0) { // 下单量不能超过配置中单笔最大下单量
-                orderWeight = unitConvertUp(maxOrderWeight, unit);
+            unit = symbolSlice.getUnit();
+            // // 计算下单量, 境内maxOrderQty为重量
+            if (orderWeight.compareTo(maxOrderQty) >= 0) { // // 下单量不能超过配置中单笔最大下单量
+                orderQty = unitConvertDown(maxOrderQty, unit);
             } else {
-                orderWeight = unitConvertUp(orderWeight, unit);
+                orderQty = unitConvertUp(orderWeight, unit);
             }
 
             orderWeight = orderWeight.min(maxOrderQty);
-            // 2. 校验 是否有在途订单未撤单？如果有（1个） 这次不执行任何操作
-            // if (maxOrderQty.compareTo(unit) < 0) {
-            //    reportExceptionAndStop(1, "单笔最大下单量太小导致无法拆单，orderWeight:{}, unit:{}, symbol:{}", orderWeight, unit, symbolSlice.getSymbol());
-            //    return;
-            // }
-
-            // 3. 校验 是否有未完成订单
-            List<StrategyOrder> pendingOrders = this.getPendingOrder();
-            BigDecimal pendingWeight = pendingOrders.stream().map(StrategyOrder::getLeavesQty).reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            if (pendingWeight.compareTo(BigDecimal.ZERO) > 0) {
-                // 如果未完成订单的量(加和)与本次需下单的量相差不大(在偏差范围内) 或者 大于本次需要的量，则不作处理。
-                reportException(2, "策略实例存在未完成的订单,无法下发执行!", pendingOrders.size());
-                log.info("[{}] 仍有未结订单(合并总数:{})，跳过下发逻辑，等待订单完成... symbol:{} pendingWeight:{} orderWeight:{} limitPrice:{}",
-                        instanceId, pendingOrders.size(),
-                        symbolSlice.getSymbol(), pendingWeight, orderWeight, limitPrice);
-                return;
-            }
         } else {
-            // 境外合约计算
-            String exchCode = BusinessConstant.OUNCE_GRAM;
-            maxOrderQty = isChase ? config.getChaseMaxOrderQty() : config.getFxMaxOrderQty();
-            BigDecimal orderQty = unitConvertUp(orderWeight, symbolSlice.getUnit()).setScale(4, BigDecimal.ROUND_DOWN); // 保留四位小数
-            orderWeight = orderQty.min(maxOrderQty);
+            // // 境外最大下单量控制与转换
+            unit = BusinessConstant.OUNCE_GRAM_LIMIT; // 对应图片中缩写或常量声明
+            maxOrderQty = isChase ? config.getChaseXauMaxOrderQty() : config.getXauMaxOrderQty();
+            orderQty = unitConvertUp(orderWeight, unit).min(maxOrderQty).setScale(0, BigDecimal.ROUND_DOWN);
+            orderWeight = orderWeight.min(maxOrderQty.multiply(unit));
         }
 
-        // 最大平盘量限制检查
-        BigDecimal maxVolume = config.getMaxVolume();
-        if (maxVolume != null && maxVolume.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal totalCumWeight = getTotalCumWeight();
-            if (totalCumWeight.add(orderWeight).compareTo(maxVolume) > 0) {
-                reportExceptionAndStop(1, "策略实例累积成交重量超过最大平盘量上限, 停止策略!", totalCumWeight);
-                log.info("[{}] 策略实例累积成交重量超过最大平盘量上限, 停止策略! totalCumWeight:{} orderWeight:{} maxVolume:{}",
-                        instanceId, totalCumWeight, orderWeight, maxVolume);
-                return;
-            }
-        }
+        // // 3. 校验: 最大下单量
+        List<NewOrder> pendingOrders = this.getPendingOrder();
+        BigDecimal pendingOrderQty = pendingOrders.stream().map(NewOrder::getLeavesQty).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal pendingOrderWeight = pendingOrderQty.multiply(unit);
 
-        // 组装参数
-        StrategyOrder strategyOrder = buildStrategyOrder(orderWeight, side, symbolSlice, isAbroad, isChase, netPos);
-        if (strategyOrder == null) {
+        if (pendingOrderWeight.add(orderWeight).compareTo(config.getMaxQtySum()) >= 0) {
+            reportException(2, "策略下单量超过最大值，忽略下单！合约: {}, 市场活跃订单重量: {}g, 本次下单重量: {}g. 阈值: {}g", symbolSlice.getSymbol(), pendingOrderWeight, orderWeight, config.getMaxQtySum());
             return;
         }
 
-        log.info("[{}] 执行策略下发逻辑", instanceId, strategyOrder);
-        // 执行下单逻辑
-        try {
-            if (strategyOrderRes.getSuccess().equals(StrategyOrderRes.SUCCESS.getSuccess())) { // 这边有问题，代码缺失了发单过程，但看意思应该是这样
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(),
-                        this.instanceId, status.get().getCode());
+        // // 4. 最大交易量校验
+        BigDecimal maxVolumn = config.getMaxVolume();
+        if (maxVolumn != null) {
+            BigDecimal totalCumWeight = getTotalCumWeight();
+            if (totalCumWeight.add(orderWeight).compareTo(maxVolumn) > 0) {
+                reportExceptionAndStop(3, "策略累计成交量超过设定阈值，停止策略！累计交易量: {}g, 本次交易量: {}g. 阈值: {}g", totalCumWeight, orderWeight, maxVolumn);
+                return;
             }
-        } catch (Exception e) {
-            reportExceptionAndStop(3, "策略实例订单下发系统异常！", e);
+        }
+
+        // // 组装母单
+        StrategyOrder strategyOrder = buildStrategyOrder(orderQty, side, symbolSlice, isAbroad, isChase, netPos);
+        if (strategyOrder == null) {
+            log.warn("[{}] 构建母单失败，忽略下单。orderWeight: {}, symbol: {}", instanceId, orderWeight, symbolSlice.getSymbol());
+            strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(), this.instanceId, String.valueOf(this.status.get().getCode()), null);
+            return;
+        }
+
+        log.info("[{}] 发送策略订单。策略订单: {}", instanceId, strategyOrder);
+        StrategyOrderRes strategyOrderRes = sendStrategyOrder(strategyOrder);
+        if (StrategyOrderRes.success().equals(strategyOrderRes)) {
+            strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(), this.instanceId, this.status.get().getCode(), null);
+        } else {
+            reportExceptionAndStop(3, "策略订单发送异常，停止策略！！策略订单ID: {}", strategyOrder.getStrategyOrderId());
         }
     }
 
-    private StrategyOrder buildStrategyOrder(BigDecimal orderQty, String side, SymbolTimeSlice symbolSlice, boolean isAbroad, boolean isChase, BigDecimal netPos) {
+    // todo:待完善补全
+    private StrategyOrder buildStrategyOrder(BigDecimal orderQty, Side side, SymbolTimeSlice symbolSlice,
+            boolean isAbroad, boolean isChase) {
         StrategyOrder strategyOrder = new StrategyOrder();
-        strategyOrder.setSide(side);
-        strategyOrder.setNetPosition(netPosition(netPos));
+        strategyOrder.setSide(side.getCode());
         strategyOrder.setSymbol(symbolSlice.getSymbol());
-        strategyOrder.setTimeout(isChase ? config.getChaseOrderTimeout() : config.getOrderTimeoutSec());
-        strategyOrder.setExchId(config.getExchId());
+        strategyOrder.setTimeOut(config.getOrderTimeoutSec());
+        strategyOrder.setUserId(config.getUserId());
         strategyOrder.setDomesticType(symbolSlice.getDomesticType());
         strategyOrder.setQty(orderQty);
-        strategyOrder.setStrategyId(config.getId());
-        strategyOrder.setName(config.getMapName());
-        strategyOrder.setParentId(config.getInstanceId());
+        strategyOrder.setTagCode(config.getTagCode());
+        strategyOrder.setTagName(config.getTagName());
+        strategyOrder.setOffsetFlag(config.getOffsetFlag());
         strategyOrder.setTraderNo(config.getTraderNo());
-        strategyOrder.setOrderType(BusinessConstant.ORDER_TAG_TYPE_MKAPHEDGE);
-        strategyOrder.setOrderTime(""); // Todo 回测未来用
-        // 境内交易参数补充
+        strategyOrder.setBusinessType(BaseConstants.ORDER_TAG_TYPE_MGAPHEDGE); // todo 业务类型
+
         if (!isAbroad) {
-            // 4. 获取当前报价
-            BigDecimal price = calculateQuotePrice(symbolSlice.getSymbol());
+            // A. 获取行情快照
+            PloyPrices depth = getOnshorePloyPrice(symbolSlice.getSymbol());
+            if (depth == null) {
+                reportException(3, "境内行情数据缺失，无法计算报价并下单: {}", symbolSlice.getSymbol());
+                strategyContext.getHedgeStrategyPushService().pushStrategyStatus(config.getUserId(),
+                        this.instanceId, String.valueOf(this.status.get().getCode()), "行情缺失，无法下单！");
+                return null;
+            }
+            // B. 计算价格
+            BigDecimal price = calculateQuotePrice(depth, side, config.getPriceBaseType(), symbolSlice.getc(), isChase);
             if (price == null) {
-                reportException(2, "未获取到境内市场合约{}报价,不予执行下发!", symbolSlice.getSymbol());
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(),
-                        this.instanceId, this.status.get().getCode());
+                reportException(3, "计算报价失败，无法正常下单！");
+                strategyContext.getHedgeStrategyPushService().pushStrategyStatus(config.getUserId(),
+                        this.instanceId, String.valueOf(this.status.get().getCode()), "计算报价失败！");
                 return null;
             }
-
-            // 5. 校验价格容差
-            BigDecimal calculateQuotePrice = calculateQuotePrice(price, side, config.getPriceBaseType(), symbolSlice.getExchCode(), isChase);
-            strategyOrder.setPrice(calculateQuotePrice);
-            if (calculateQuotePrice == null) {
-                reportException(2, "计算的报价容差为空,不予执行下发!", symbolSlice.getSymbol());
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(),
-                        this.instanceId, this.status.get().getCode());
-                return null;
-            }
-
-            // 6. 提单价格校验
-            KsdStaticQuoteInfo ksdStaticQuoteInfo = strategyContext.getKsdStaticQuoteCacheService().getByInstrumentId(symbolSlice.getSymbol());
+            // C.涨跌停校验
+            KsdStaticQuoteInfo ksdStaticQuoteInfo = strategyContext.getKsdStaticQuoteCacheService()
+                    .getByInstrumentId(symbolSlice.getSymbol());
             if (ksdStaticQuoteInfo == null) {
-                reportException(2, "非白盘价格涨跌停为空,停止下发!!", symbolSlice.getSymbol());
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(),
-                        this.instanceId, this.status.get().getCode());
+                reportException(3, "涨跌停价格为空，禁止下单！");
+                strategyContext.getHedgeStrategyPushService().pushStrategyStatus(config.getUserId(),
+                        this.instanceId, String.valueOf(this.status.get().getCode()), "涨跌停价格为空，禁止下单!");
                 return null;
             }
-
             BigDecimal upLimitBuffer;
             BigDecimal downLimitBuffer;
-            if ("T+D".equals(symbolSlice.getContractType())) {
-                downLimitBuffer = config.getTndLimitBuffer().divide(BigDecimal.valueOf(100), 4, BigDecimal.ROUND_DOWN);
-                upLimitBuffer = BigDecimal.ONE.subtract(config.getTndLimitBuffer().divide(BigDecimal.valueOf(100), 4, BigDecimal.ROUND_DOWN));
-            } else {
-                downLimitBuffer = config.getSpotLimitBuffer().divide(BigDecimal.valueOf(100), 4, BigDecimal.ROUND_DOWN);
-                upLimitBuffer = BigDecimal.ONE.subtract(config.getSpotLimitBuffer().divide(BigDecimal.valueOf(100), 4, BigDecimal.ROUND_DOWN));
+            // 1. 根据合约类型获取不同的涨跌幅缓冲配置 (配置值除以100，转为系数)
+            if ("2".equals(symbolSlice.getContractType())) {// 期货合约
+                downLimitBuffer = config.getShfeLimitBuffer().divide(BigDecimal.valueOf(100)).add(BigDecimal.ONE);
+                upLimitBuffer = BigDecimal.ONE.subtract(config.getShfeLimitBuffer().divide(BigDecimal.valueOf(100)));
+            } else {// 其他合约
+                downLimitBuffer = config.getSgeLimitBuffer().divide(BigDecimal.valueOf(100)).add(BigDecimal.ONE);
+                upLimitBuffer = BigDecimal.ONE.subtract(config.getShfeLimitBuffer().divide(BigDecimal.valueOf(100)));
             }
-            // 涨跌停容忍度校验
-            if (price.compareTo(ksdStaticQuoteInfo.getLowerLimitPrice().multiply(downLimitBuffer)) <= 0
-                    || price.compareTo(ksdStaticQuoteInfo.getUpperLimitPrice().multiply(upLimitBuffer)) >= 0) {
-                reportExceptionAndStop(1, "最新报价{}，跌停价{}，涨停价{}，不满足价格容差策略，停止策略!",
-                        price, ksdStaticQuoteInfo.getLowerLimitPrice(), ksdStaticQuoteInfo.getUpperLimitPrice());
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(),
-                        this.instanceId, this.status.get().getCode());
+            // 2. 报价范围校验：如果报价超出了涨跌停价格的缓冲区间，则禁止下单
+            if (price.compareTo(ksdStaticQuoteInfo.getLowerLimitPrice().multiply(downLimitBuffer)) < 0
+                    || price.compareTo(ksdStaticQuoteInfo.getUpperLimitPrice().multiply(upLimitBuffer)) > 0) {
+                reportException(3, "合约{} 报价未在涨跌停缓冲范围内，禁止下单！", symbolSlice.getSymbol());
+                strategyContext.getHedgeStrategyPushService().pushStrategyStatus(config.getUserId(),
+                        this.instanceId, String.valueOf(this.status.get()), "报价未在涨跌停缓冲范围内，禁止下单!!");
                 return null;
             }
-
-            // 7. 首笔差价校验 (仅首次平盘有效)
+            // 统一校验：全局报价偏离度保护 (涵盖平盘和追单，防止价格冲击过大)
             if (this.firstQuotePrice == null) {
+                // 记录首单基准价格 (可能是平盘的首单，也可能是追单的首单)
                 this.firstQuotePrice = price;
+                log.info("[{}] 记录首笔平盘基准下单价: {}", instanceId, this.firstQuotePrice);
+            } else {
+                if (config.getChaseOrderDeviation() != null) {
+                    // 使用局部变量 price 计算偏离度，修复了之前使用尚未赋值的 strategyOrder.getPrice() 导致的空指针隐患
+                    BigDecimal currentDeviation = price.subtract(this.firstQuotePrice)
+                            .divide(this.firstQuotePrice, 4, RoundingMode.HALF_UP).abs();
+                    if (currentDeviation.compareTo(config.getChaseOrderDeviation()) > 0) {
+                        reportExceptionAndStop(3, "报价偏离度过大触发熔断！首笔基准报价: {}, 当前报价: {}, 偏离度: {}, 配置阈值: {}", 
+                                this.firstQuotePrice, price, currentDeviation, config.getChaseOrderDeviation());
+                        return null;
+                    }
+                }
             }
-            // if (price.compareTo(this.firstQuotePrice) != 0) {
-            //     if (config.getChaseOrderDeviation() != null) {
-            //         BigDecimal priceDeviation = price.subtract(this.firstQuotePrice).divide(this.firstQuotePrice, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100));
-            //         log.info("[{}] 平盘下单价格偏移:{}, 容许偏差:{}", instanceId, priceDeviation, config.getChaseOrderDeviation());
-            //         if (priceDeviation.compareTo(config.getChaseOrderDeviation()) > 0) {
-            //             reportExceptionAndStop(1, "首笔差价超出最大偏移容差配置，停止策略！");
-            //             log.info("[{}] 首笔差价超出最大偏移容差配置，停止策略！ price:{}, firstQuotePrice:{}, config.getChaseOrderDeviation:{}",
-            //                     instanceId, price, this.firstQuotePrice, config.getChaseOrderDeviation());
-            //             return null;
-            //         }
-            //     }
-            // }
-
             strategyOrder.setPrice(price);
             ClientMemberInfo clientMemberInfo = config.getClientMemberInfo().get(symbolSlice.getExchCode());
-            strategyOrder.setCounterParty(clientMemberInfo.getMemberId());
+            strategyOrder.setMemberId(clientMemberInfo.getMemberId());
             strategyOrder.setClientId(clientMemberInfo.getClientId());
-
         } else {
-            PlayPrices depth = getOffshorePlayPrice(symbolSlice.getSymbol(), config.getExchId(), config.getCounterParty());
+            PloyPrices depth = getOffshorePloyPrice(symbolSlice.getSymbol(), config.getExchId(),
+                    config.getCounterParty());
             if (depth == null) {
-                reportException(2, "境外{}报价不在线!", symbolSlice.getSymbol());
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(),
-                        this.instanceId, this.status.get().getCode());
-                return null;
-            }
-            BigDecimal spread = depth.getBestSpread();
-            if (spread.compareTo(config.getMaxSpread()) > 0) {
-                reportException(2, "当前点差已发生变动，超出配置阈值{}, 停止下发!", symbolSlice.getSymbol(), config.getMaxSpread());
-                strategyContext.getGoldHedgeStrategyWebSocketService().sendGoldHedgeStrategyStatus(config.getUserId(),
-                        this.instanceId, this.status.get().getCode());
-
+                reportException(3, "境外行情缺失，无法下单: {}", symbolSlice.getSymbol());
+                strategyContext.getHedgeStrategyPushService().pushStrategyStatus(config.getUserId(),
+                        this.instanceId, String.valueOf(this.status.get()), "境外行情缺失，无法下单!!");
                 return null;
             }
             strategyOrder.setExchCode(config.getExchId());
@@ -771,69 +693,57 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
     }
 
     /**
-     * 【境内】 合约计算报价
-     * 针对境内合约根据基准价格类型和交易方向来计算挂单价格
+     * 【细化】价格计算引擎
+     * 基于配置的交易模式 从行情中提取基准价并加点
      */
-    private BigDecimal calculateQuotePrice(BigDecimal playPrices, String side, String priceBaseType,
-                                           String exchCode, boolean isChase) {
+    private BigDecimal calculateQuotePrice(PloyPrices ployPrices, Side side, String priceBaseType, String contractType,
+            boolean isChase) {
 
         BigDecimal basePrice = null;
-        log.info("[{}] 合约挂单配置价格策略计算", instanceId);
-
-        // 交易方向为卖出并且配置按买入价挂单，否则按照卖出价
-        // 境内合约没有深度报价，所以拿最新价
-        if ("1".equalsIgnoreCase(priceBaseType)) {
-            basePrice = playPrices;
-        } else if ("2".equalsIgnoreCase(priceBaseType)) {
-            basePrice = playPrices;
-        } else if ("3".equalsIgnoreCase(priceBaseType)) {
-            basePrice = playPrices;
+        log.info("[{}] 计算基准: {}", instanceId, priceBaseType);
+        // 1. 获取基准价 (Base Price)
+        // 对手方最优: 吃对手价 (买入看卖一，卖出看买一) todo:枚举值管理
+        if (isChase || "1".equalsIgnoreCase(priceBaseType)) {
+            basePrice = (side == Side.BUY) ? ployPrices.getBestAskPx() : ployPrices.getBestBidPx(); // 直接选取对手最优档位
+        } else if ("0".equals(priceBaseType)) {
+            basePrice = (side == Side.BUY) ? ployPrices.getSecondBestAskPx() : ployPrices.getSecondBestBidPx();
+        }
+        // 挂本方价: 本方最优和本方次优
+        else if ("3".equals(priceBaseType)) {
+            basePrice = (side == Side.BUY) ? ployPrices.getBestBidPx() : ployPrices.getBestAskPx();
+        } else if ("4".equals(priceBaseType)) {
+            basePrice = (side == Side.BUY) ? ployPrices.getSecondBestBidPx() : ployPrices.getSecondBestAskPx();
+        }
+        // N (Neutral/中性): 中间价
+        else if ("2".equals(priceBaseType)) {
+            basePrice = ployPrices.getMidPx();
         }
 
-        if (basePrice == null) return null;
+        if (basePrice == null)
+            return null;
 
-        // 3. 盘口点差 (spread)
-        // 买入价 = 基准价 + 点差
-        // 卖出价 = 基准价 - 点差
+        // 2. 叠加点差 (Spread)
+        // 买入价 = 基准 + 买入点差
+        // 卖出价 = 基准 + 卖出点差
         BigDecimal finalPrice;
-        BigDecimal spread = BigDecimal.ZERO;
-        if (Side.BUY.equals(side)) {
-            if (BusinessConstant.SM_FUTURES_EXCHANGE.equals(exchCode)) {
+        BigDecimal spread;
+        if (side == Side.BUY) {
+            if ("2".equals(contractType)) {
                 spread = isChase ? config.getFutureBuyChaseSpread() : config.getFutureBidSpread();
             } else {
                 spread = isChase ? config.getSpotBuyChaseSpread() : config.getSpotBidSpread();
             }
         } else {
-            if (BusinessConstant.SM_FUTURES_EXCHANGE.equals(exchCode)) {
-                spread = isChase ? config.getFutureSellChaseSpread() : config.getFutureOfSpread();
+            if ("2".equals(contractType)) {
+                spread = isChase ? config.getFutureSellChaseSpread() : config.getFutureOfrSpread();
             } else {
                 spread = isChase ? config.getSpotSellChaseSpread() : config.getSpotOfrSpread();
             }
         }
 
         finalPrice = basePrice.add(spread);
+        log.info("计算报价结束，挂单基准价: {}, 挂单点差: {}, 最终挂单价: {}", basePrice, spread, finalPrice);
         return finalPrice;
-    }
-
-    public void handleSymbolChange() {
-        cancelAllOrders();
-        this.firstQuotePrice = null;
-    }
-
-    /**
-     * 状态切换函数 (基于原子操作)
-     *
-     * @param expectedStatus 期望的当前状态
-     * @param targetStatus   目标状态
-     * @return 是否成功切换
-     */
-    private boolean attemptTransition(StrategyStatus expectedStatus, StrategyStatus targetStatus) {
-        if (status.compareAndSet(expectedStatus, targetStatus)) {
-            log.info("[{}] 状态成功从 {} -> {}", instanceId, expectedStatus, targetStatus);
-            return true;
-        } else {
-            log.warn("[{}] 状态切换失败，预期状态: {}, 当前状态: {}", instanceId, expectedStatus, status.get());
-        }
     }
 
     /**
@@ -893,14 +803,29 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         }
     }
 
-    // ================== 辅助方法 ==================
-
-    private BigDecimal unitConvertUp(BigDecimal gap, BigDecimal unit) {
-        return gap.divide(unit, 0, RoundingMode.UP).multiply(unit);
+    /**
+     * 尝试状态流转（原子性操作）
+     *
+     * @param expectedStatus 期望的当前状态（前置条件）
+     * @param targetState    目标状态
+     * @return 是否流转成功
+     */
+    private boolean attemptTransition(StrategyStatus expectedStatus, StrategyStatus targetState) {
+        // CAS 原子更新（防止并发修改）
+        if (status.compareAndSet(expectedStatus, targetState)) {
+            log.info("[{}] 状态流转成功：{} -> {}", instanceId, expectedStatus, targetState);
+            return true;
+        } else {
+            // CAS 失败意味着在校验和更新之间状态被其他线程修改了
+            log.warn("[{}] 状态流转失败：CAS并发冲突。原状态可能已变更。", instanceId);
+            return false;
+        }
     }
 
-    private BigDecimal unitConvertDown(BigDecimal gap, BigDecimal unit) {
-        return gap.divide(unit, 0, RoundingMode.DOWN).multiply(unit);
+    // ---------------- 辅助方法 ----------------
+
+    private BigDecimal unitConvert(BigDecimal gap, BigDecimal unit) {
+        return gap.divide(unit, 0, RoundingMode.UP); // 向上取整，最多平超一手
     }
 
     private void stopTask(ScheduledFuture<?> task) {
@@ -914,155 +839,136 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
     }
 
     /**
-     * 判断敞口是否在容差范围内，是的话回到监控状态
+     * 敞口安全判定逻辑
+     * 不再使用固定比例，而是直接读取 SymbolTimeSlice 中的终止线
      */
-    private boolean isGapSafe(BigDecimal gap, SymbolTimeSlice slice) {
+    private boolean isGapSafe(BigDecimal gap, SymbolTimeSlice rule) {
+        // Gap > 0 (缺货/多头敞口)：需买入平盘，直到 Gap <= 多头终止线
         if (gap.compareTo(BigDecimal.ZERO) > 0) {
-            return gap.compareTo(slice.getStartLongPosition()) <= 0;
-        } else {
-            return gap.abs().compareTo(slice.getEndShortPosition().abs()) <= 0;
+            return gap.compareTo(rule.getEndLongPosition()) <= 0;
+        }
+        // Gap < 0 (多货/空头敞口)：需卖出平盘，直到 Abs(Gap) <= 空头终止线
+        else {
+            return gap.abs().compareTo(rule.getEndShortPosition()) <= 0;
         }
     }
 
-    // SDK 事务钩子
+    // ---------------- SDK 事件接收 ----------------
+
     @Override
     public void onMatch(ExecutionReport executionReport) {
-        log.info("[{}] 收到成交回报: {}", instanceId, executionReport);
-        if (this.orderEventExecutor == null || this.status.get() == StrategyStatus.STOPPED) {
-            log.warn("[{}] 已收到成交回报，但策略已停止: {}", instanceId, executionReport);
-        }
-
+        log.info("[{}] 收到成交事件：{}", instanceId, executionReport);
         try {
-            // 解析更新统计信息
+            // 获取并更新合约汇总信息
             StrategyStatSummary statSummary = calMatchSummary(executionReport);
-            HEDGE_STRATEGY_MAP.put(statSummary.getSymbol(), statSummary);
+            HEDGE_STRATEGY_MAP.put(statSummary.getSymbol() + ":" + statSummary.getSide(), statSummary);
         } catch (Exception e) {
-            reportException(2, "解析成交回报异常！", e);
+            reportException(3, "处理订单成交回报事件异常！event: {}", executionReport, e);
         }
     }
 
-    private StrategyStatSummary calMatchSummary(ExecutionReport executionReport) {
-        // 更新统计信息到缓存中
-        StrategyStatSummary statSummary = HEDGE_STRATEGY_MAP.get(executionReport.getSymbol());
-        if (statSummary == null) {
-            statSummary = new StrategyStatSummary(config.getUserId(), this.instanceId, executionReport.getSymbol());
-            statSummary.setSide(executionReport.getSide()); // 这里买卖方向
-            statSummary.setSymbol(executionReport.getSymbol());
-            statSummary.setExchId(executionReport.getExchId());
-            statSummary.setAvgPrice(executionReport.getAvgPx());
-            statSummary.setCumWeight(executionReport.getCumQty());
-            statSummary.setDomesticType(config.getDomesticType());
-            if (BaseConstants.DOMESTIC_TYPE_INNER.equals(config.getDomesticType())) {
-                if (BusinessConstant.SM_FUTURES_EXCHANGE.equals(executionReport.getExchId())) {
-                    statSummary.setCumAmount(executionReport.getCumQty().multiply(executionReport.getAvgPx()));
+    /**
+     * 合约信息统一计算内部调用
+     *
+     * @param executionReport
+     */
+        private StrategyStatSummary calMatchSummary(ExecutionReport executionReport) {
+            StrategyStatSummary statSummary = HEDGE_STRATEGY_MAP.get(executionReport.getSymbol() + ":" + executionReport.getSide());
+
+            // // 判空 --
+            if (null == statSummary) {
+                statSummary = new StrategyStatSummary(config.getUserId(), this.instanceId, executionReport.getSymbol());
+                statSummary.setSide(executionReport.getSide()); // // 买卖方向
+                statSummary.setCumQty(executionReport.getLastQty());
+                statSummary.setCumAmount(executionReport.getLastAmt());
+                statSummary.setAvgPrice(executionReport.getAvgPx());
+                String domesticType = executionReport.getDomesticType();
+                statSummary.setDomesticType(domesticType);
+
+                if (BaseConstants.DOMESTIC_TYPE_INNER.equals(domesticType)) {
+                    statSummary.setCumWeight(statSummary.convertToWeight(statSummary.getCumQty(), executionReport.getUnit())); // // 统一单位换算
+                    statSummary.setMktPrice(getOnshorePloyPrice(executionReport.getSymbol()).getMktPx());
                 } else {
-                    statSummary.setCumAmount(executionReport.getCumQty().multiply(executionReport.getAvgPx()).multiply(
-                            BaseConstant.OUNCE_GRAM_UNIT));
+                    statSummary.setCumWeight(statSummary.convertToWeight(statSummary.getCumQty(), BaseConstant.OUNCE_GRAM_UNIT)); // // 统一单位换算
+                    statSummary.setMktPrice(getOffshorePloyPrice(executionReport.getSymbol(), config.getExchId(), config.getCounterParty()).getMktPx());
                 }
-                statSummary.setAmountPrice(statSummary.getCumAmount().divide(statSummary.getCumWeight(), 4, RoundingMode.HALF_UP));
             } else {
-                BigDecimal cumAmount = statSummary.getCumAmount().add(executionReport.getCumQty().multiply(executionReport.getAvgPx()));
+                BigDecimal cumQty = statSummary.getCumQty().add(executionReport.getLastQty()); // // 成交量累计
+                statSummary.setCumQty(cumQty); // //
+                BigDecimal cumAmount = statSummary.getCumAmount().add(executionReport.getLastAmt()); // // 成交金额累计
                 statSummary.setCumAmount(cumAmount);
-                statSummary.setAvgPrice(statSummary.getCumAmount().divide(statSummary.getCumWeight(), 4, RoundingMode.HALF_UP));
-            }
-        } else {
-            BigDecimal cumWeight = statSummary.getCumWeight().add(executionReport.getCumQty()); // 累计成交量
-            statSummary.setCumWeight(cumWeight);
-            if (BaseConstants.DOMESTIC_TYPE_INNER.equals(statSummary.getDomesticType())) {
-                if (BusinessConstant.SM_FUTURES_EXCHANGE.equals(executionReport.getExchId())) {
-                    statSummary.setCumAmount(statSummary.getCumAmount().add(executionReport.getCumQty().multiply(executionReport.getAvgPx())));
+
+                if (BaseConstants.DOMESTIC_TYPE_INNER.equals(statSummary.getDomesticType())) {
+                    statSummary.setCumWeight(statSummary.convertToWeight(statSummary.getCumQty(), executionReport.getUnit())); // // 统一单位换算
+                    statSummary.setMktPrice(getOnshorePloyPrice(executionReport.getSymbol()).getMktPx());
+                    if (statSummary.getCumWeight().compareTo(BigDecimal.ZERO) != 0) {
+                        statSummary.setAvgPrice(cumAmount.divide(statSummary.getCumWeight(), 2, BigDecimal.ROUND_HALF_UP));
+                    }
                 } else {
-                    statSummary.setCumAmount(statSummary.getCumAmount().add(executionReport.getCumQty().multiply(executionReport.getAvgPx()).multiply(
-                            BaseConstant.OUNCE_GRAM_UNIT)));
+                    statSummary.setCumWeight(statSummary.convertToWeight(statSummary.getCumQty(), BaseConstant.OUNCE_GRAM_UNIT)); // // 统一单位换算
+                    statSummary.setMktPrice(getOffshorePloyPrice(executionReport.getSymbol(), config.getExchId(), config.getCounterParty()).getMktPx());
+                    if (cumQty.compareTo(BigDecimal.ZERO) != 0) {
+                        statSummary.setAvgPrice(cumAmount.divide(cumQty, 2, BigDecimal.ROUND_HALF_UP));
+                    }
                 }
-                statSummary.setAvgPrice(statSummary.getCumAmount().divide(statSummary.getCumWeight(), 4, RoundingMode.HALF_UP));
-            } else {
-                BigDecimal cumAmount = statSummary.getCumAmount().add(executionReport.getCumQty().multiply(executionReport.getAvgPx()));
-                statSummary.setCumAmount(cumAmount);
-                statSummary.setAvgPrice(statSummary.getCumAmount().divide(statSummary.getCumWeight(), 4, RoundingMode.HALF_UP));
             }
-        }
-        return statSummary;
-    }
 
-    private BigDecimal getTotalCumWeight() {
-        BigDecimal totalCumWeight = BigDecimal.ZERO;
-        for (StrategyStatSummary statSummary : HEDGE_STRATEGY_MAP.values()) {
-            if (statSummary.getCumWeight() != null) {
-                totalCumWeight = totalCumWeight.add(statSummary.getCumWeight());
-            }
+            return statSummary;
         }
-        return totalCumWeight;
-    }
 
+
+    @Override
+    public void onRtnOrder(ExecutionReport executionReport) {
+        log.info("[{}] receive order confirm: {}", instanceId, executionReport);
+        // StrategyStatSummary orderQtyResult = calOrderRtnSummary(executionReport);
+        // HEDGE_STRATEGY_MAP.put(executionReport.getSymbol() + ":" +
+        // executionReport.getSide(), orderQtyResult);
+    }
 
     @Override
     public void onOrderCancel(ExecutionReport executionReport) {
+        log.info("[{}] receive order cancel: {}", instanceId, executionReport);
     }
 
     @Override
     public void onOrderRejected(ExecutionReport executionReport) {
+        log.info("[{}] receive order reject: {}", instanceId, executionReport);
     }
 
-    @Override
-    public void onOrderEvent(ExecutionReport executionReport) {
+    public void onOtherEvent(ExecutionReport executionReport) {
+        // ...
     }
 
-    public Map<String, StrategyStatSummary> getHedgeStrategyMap() { return HEDGE_STRATEGY_MAP; }
+    public Map<String, StrategyStatSummary> getHdegeStrategyMap() {
+        return HEDGE_STRATEGY_MAP;
+    }
 
-    public HedgeGoldStrategyBean getHedgeStrategyInstanceInfo() {
-        PlayPrices playPrices = null;
+    /**
+     * 查询策略详细信息并进行返回
+     *
+     * @return
+     */
+    public GoldStrategyBean getHdegeStrategyInstanceInfo() {
+        PloyPrices onshorePloyPrice = null;
         if (BaseConstants.DOMESTIC_TYPE_INNER.equals(activeTimeSlice.getDomesticType())) {
-            playPrices = getOnshorePlayPrice(activeTimeSlice.getSymbol()); // 境内
+            // 境内
+            onshorePloyPrice = getOnshorePloyPrice(activeTimeSlice.getSymbol());
         } else {
-            playPrices = getOffshorePlayPrice(activeTimeSlice.getSymbol(),
-                    config.getExchId(), config.getCounterParty()); // 境外
+            onshorePloyPrice = getOffshorePloyPrice(activeTimeSlice.getSymbol(), config.getExchId(),
+                    config.getCounterParty());
         }
 
-        HedgeGoldStrategyBean goldHedgeStrategyBean = new HedgeGoldStrategyBean(config,
-                this.instanceId, HEDGE_STRATEGY_MAP, this.positionSnapshot, activeTimeSlice,
-                this.getPendingOrder(), playPrices, chaseNumber);
-        
-        goldHedgeStrategyBean.setInstanceId(instanceId);
-        goldHedgeStrategyBean.setStatusCode(this.status.get().getCode());
-        goldHedgeStrategyBean.setStatusDesc(this.status.get().getDescription());
-        return goldHedgeStrategyBean;
-    }
-
-    public void updateStatusAsync(Integer level, String message) {
-        strategyContext.getExecutorService().execute(() -> {
-            strategyContext.getGoldHedgeStrategyNotificationService().pushExceptionInfo(instanceId, level, message);
-        });
-    }
-
-    public void updateStatusAsync(String reason) {
-        strategyContext.getExecutorService().execute(() -> {
-            strategyContext.getGoldHedgeStrategyInstanceService().updateStrategyInstanceStatus(config.getUserId(),
-                    instanceId, this.status.get().getCode(), reason);
-        });
-    }
-
-    private void reportException(Integer level, String message, Object... args) {
-        String msg = MessageFormatter.arrayFormat(message, args).getMessage();
-        Throwable throwable = MessageFormatter.getThrowableCandidate(args);
-
-        if (throwable != null) {
-            log.error("[{}] {}", this.instanceId, msg, throwable);
-        } else {
-            if (level == 3) {
-                log.error("[{}] {}", this.instanceId, msg);
-            } else if (level == 2) {
-                log.warn("[{}] {}", this.instanceId, msg);
-            } else {
-                log.info("[{}] {}", this.instanceId, msg);
-            }
+        GoldStrategyBean goldHedgeStrategyInstanceInfo = strategyContext.getHedgeStrategyInstanceService()
+                .getGoldHedgeStrategyInstanceInfo(config.getUserId(), instanceId);
+        if (null == goldHedgeStrategyInstanceInfo) {
+            goldHedgeStrategyInstanceInfo = new GoldStrategyBean();
         }
-        updateStatusAsync(level, msg);
-    }
+        goldHedgeStrategyInstanceInfo.setInstanceId(instanceId);
+        goldHedgeStrategyInstanceInfo.setStatus(StrategyStatus.fromStatusCode(status.get().getCode()));
+        goldHedgeStrategyInstanceInfo
+                .setMessage(StrategyStatus.fromStatusCode(status.get().getCode()).getFinDescription());
 
-    private void reportExceptionAndStop(Integer level, String message, Object... args) {
-        reportException(level, message, args);
-        this.stop(MessageFormatter.arrayFormat(message, args).getMessage());
+        return goldHedgeStrategyInstanceInfo;
     }
 
     public void pushExceptionInfo(Integer level, String message){
@@ -1105,5 +1011,35 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         return total;
     }
 
+    /**
+     * 记录异常日志并推送告警（不停止策略，例如行情缺失）
+     *
+     * @param level   告警级别
+     * @param message 基础异常信息模板 (如 "行情缺失: symbol={}")
+     * @param args    参数 (如果最后一个参数是 Exception 对象，会自动提取并打印堆栈)
+     */
+    private void reportException(Integer level, String message, Object... args) {
+        FormattingTuple ft = MessageFormatter.arrayFormat(message, args);
+        String reason = ft.getMessage();
+        Throwable throwable = ft.getThrowable();
+
+        if (throwable != null) {
+            log.error("[{}] {}", this.instanceId, reason, throwable);
+        } else {
+            log.error("[{}] {}", this.instanceId, reason);
+        }
+
+        pushExceptionInfo(level, reason);
+    }
+
+    /**
+     * 记录严重异常日志、推送告警，并立即停止策略（例如头寸数据丢失）
+     */
+    private void reportExceptionAndStop(Integer level, String message, Object... args) {
+        reportException(level, message, args);
+
+        FormattingTuple ft = MessageFormatter.arrayFormat(message, args);
+        this.stop(ft.getMessage());
+    }
 
 }

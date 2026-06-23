@@ -1,6 +1,5 @@
 package com.cmbc.strategy.engine.hedge.manager;
 
-<<<<<<< HEAD
 import com.cmbc.oms.domain.event.ContractInfoBasic;
 import com.cmbc.oms.infrastructure.cache.BasicParamCacheManager;
 import com.cmbc.strategy.dao.StrategyConfigMapper;
