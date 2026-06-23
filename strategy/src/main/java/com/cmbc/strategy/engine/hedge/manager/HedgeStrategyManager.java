@@ -3,6 +3,7 @@ package com.cmbc.strategy.engine.hedge.manager;
 import com.alibaba.fastjson.JSONObject;
 import com.cmbc.common.util.ShardingThreadPool;
 import com.cmbc.mds.ksd.cache.KsdStaticQuoteCacheService;
+import com.cmbc.oms.constant.BaseConstants;
 import com.cmbc.oms.domain.exception.ExceptionNotificationService;
 import com.cmbc.oms.domain.exposure.model.HedgePositionSummary;
 import com.cmbc.oms.domain.exposure.service.MgapClientPositionService;
@@ -13,10 +14,12 @@ import com.cmbc.oms.domain.facade.strategy.api.QuantPositionUpdateListener;
 import com.cmbc.oms.domain.order.model.ExecutionReport;
 import com.cmbc.oms.infrastructure.facadeimpl.strategy.OmsService;
 import com.cmbc.strategy.configuration.BusinessException;
+import com.cmbc.strategy.constant.StrategyStatus;
 import com.cmbc.strategy.domain.dto.HedgeStrategyChaseRequest;
 import com.cmbc.strategy.domain.dto.HedgeStrategyRequest;
 import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
+import com.cmbc.strategy.domain.model.hedge.GoldStrategyBean;
 import com.cmbc.strategy.engine.context.StrategyContext;
 import com.cmbc.strategy.engine.hedge.instance.HedgeStrategyInstance;
 import com.cmbc.strategy.engine.hedge.trigger.HedgeTrigger;
@@ -28,6 +31,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
 import javax.annotation.PostConstruct;
@@ -43,6 +47,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, MgapPositi
 
     @Autowired
     private HedgeTrigger triggerEvaluator;
+<<<<<<< HEAD
     
     // @Autowired
     // private OrderAlgoService algoService;
@@ -77,7 +82,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, MgapPositi
     @Autowired
     @Qualifier("strategyEngineTaskScheduler")
     private TaskScheduler strategyEngineTaskScheduler; // Spring提供的线程池调度器
-    
+
     @Autowired
     private StrategyConfigLoader configLoader;
 
@@ -132,7 +137,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, MgapPositi
                 if(BaseConstants.DOMESTIC_TYPE_INNER.equals(slice.getDomesticType())){
                     String symbol = slice.getSymbol();
                     // ContractInfoBasic contractInfoBasic = basicParamManager.getContractInfo(symbol);
-                    // ... 
+                    // ...
                 }
             }
         }
@@ -144,14 +149,16 @@ public class HedgeStrategyManager implements ExecutionReportListener, MgapPositi
             // context.setMarketDataService(marketDataService);
             context.setOmsService(omsService);
             // context.setPositionService(positionService);
+
             context.setGoldHedgeStrategyInstanceService(goldHedgeStrategyInstanceService);
             context.setGoldHedgeStrategyWebSocketService(goldHedgeStrategyWebSocketService);
             context.setKsdStaticQuoteCacheService(ksdStaticQuoteCacheService);
             context.setExceptionNotificationService(exceptionNotificationService);
-            context.setIoExecutor(ioExecutor);
-            // context.setImsMessageNotifyService(imsMessageNotifyService);
+            context.setGoldHedgeIoPool(goldHedgeIoPool);
+            context.setGoldHedgeEventPool(goldHedgeEventPool);
+            context.setStrategyTimerService(strategyTimerService);
 
-            // 异常配置信息填充到 config 中（方便策略内部使用）
+            // 3. 将策略基础信息填充到 config 中
             config.setInstanceId(instanceId);
             config.setUserId(request.getUserName());
             config.setAccount(request.getAccount());
@@ -237,7 +244,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, MgapPositi
 
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            // ... 
+            // ...
         }
     }
 
@@ -250,7 +257,7 @@ public class HedgeStrategyManager implements ExecutionReportListener, MgapPositi
 
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            eventExecutor.execute(executionReport.getInstanceId(), () -> {
+            goldHedgeStatPool.execute(executionReport.getInstanceId(), () -> {
                 instance.onOrderRejected(executionReport);
             });
         }
@@ -265,9 +272,89 @@ public class HedgeStrategyManager implements ExecutionReportListener, MgapPositi
 
         HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
         if (instance != null) {
-            eventExecutor.execute(executionReport.getInstanceId(), () -> {
+            goldHedgeStatPool.execute(executionReport.getInstanceId(), () -> {
                 instance.onMatch(executionReport);
             });
         }
+    }
+
+    @Override
+    public void onCancel(ExecutionReport executionReport) {
+        if (executionReport == null || StringUtils.isEmpty(executionReport.getInstanceId())) {
+            log.warn("收到非法事件，InstanceId为空: {}", executionReport);
+            return;
+        }
+        HedgeStrategyInstance instance = runningInstances.get(executionReport.getInstanceId());
+        if (instance != null) {
+            goldHedgeStatPool.execute(executionReport.getInstanceId(), () -> {
+                instance.onOrderCancel(executionReport);
+            });
+        }
+    }
+
+    /**
+     * 停止/暂停/恢复策略操作
+     */
+    public void operateStrategy(HedgeStrategyUpdateRequest request) {
+        HedgeStrategyInstance instance = runningInstances.get(request.getInstanceId());
+        if (instance != null) {
+            String oprType = request.getOprType();
+
+            if ("1".equals(oprType)) {
+                log.info("Strategy stop req.instanceId: {}", request.getInstanceId());
+                instance.stop();
+            } else if ("2".equals(oprType)) {
+                log.info("Strategy pause {} req.instanceId: {}", "pause", request.getInstanceId());
+                instance.pause();
+            } else if ("4".equals(oprType)) {
+                log.info("Strategy resume {} req.instanceId: {}", "resume", request.getInstanceId());
+                instance.resume();
+            }
+            log.info("Strategy {} stopped.", request.getInstanceId());
+        }
+    }
+
+    @PreDestroy
+    public void stopAllStrategyGraceFully() {
+        log.info("All strategy is stopping...");
+        if (!CollectionUtils.isEmpty(runningInstances)) {
+            for (HedgeStrategyInstance instance : runningInstances.values()) {
+                if (instance.isRunning()) {
+                    instance.stop();
+                    log.info("策略{}已停止", instance.getInstanceId());
+                }
+            }
+        }
+        log.info("所有策略已关闭");
+    }
+
+    /**
+     * 查询积存进策略信息
+     */
+    public GoldStrategyBean queryStrategyInstance(QueryHedgeStrategyInstanceRequest request) {
+        HedgeStrategyInstance instance = runningInstances.get(request.getInstanceId());
+        if (instance != null) {
+            // 证明策略实例存在，查询具体明细
+            GoldStrategyBean res = instance.getHedgeStrategyInstanceInfo();
+            return res;
+        }
+
+        // 数据库查询策略运行数据
+        GoldStrategyBean res = new GoldStrategyBean();
+        GoldHedgeStrategyInstanceEntity goldHedgeStrategyInstanceEntity = goldHedgeStrategyInstanceService.queryInfoByInstanceId(request.getInstanceId());
+        if (Objects.isNull(goldHedgeStrategyInstanceEntity)) {
+            res.setInstanceId(request.getInstanceId());
+            res.setUserName(request.getUserName());
+        } else {
+            res.setInstanceId(goldHedgeStrategyInstanceEntity.getInstanceId());
+            res.setStatus(StrategyStatus.fromStatusCode(goldHedgeStrategyInstanceEntity.getStatus()).getFinDescription());
+            res.setMessage(goldHedgeStrategyInstanceEntity.getStatus().toString());
+            res.setUserName(goldHedgeStrategyInstanceEntity.getCreateBy());
+        }
+        return res;
+    }
+
+    public int getRunningCount() {
+        return (int) runningInstances.values().stream().filter(HedgeStrategyInstance::isRunning).count();
     }
 }

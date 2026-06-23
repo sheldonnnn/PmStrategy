@@ -1,5 +1,6 @@
 package com.cmbc.strategy.engine.hedge.manager;
 
+<<<<<<< HEAD
 import com.cmbc.oms.domain.event.ContractInfoBasic;
 import com.cmbc.oms.infrastructure.cache.BasicParamCacheManager;
 import com.cmbc.strategy.dao.StrategyConfigMapper;
@@ -95,4 +96,5 @@ public class StrategyConfigLoader {
         if (contractInfo.getDomesticType() == null) throw new RuntimeException("启动策略失败: " + symbol + "合约境内外标识基础配置缺失");
         if (contractInfo.getContractType() == null) throw new RuntimeException("启动策略失败: " + symbol + "合约类型基础配置缺失");
     }
+
 }
