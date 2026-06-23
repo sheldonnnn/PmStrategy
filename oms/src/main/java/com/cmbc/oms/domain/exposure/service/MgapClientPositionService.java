@@ -95,7 +95,7 @@ public class MgapClientPositionService {
                 }
             }
             MgapPosResponse mgapPosResponse = restTemplate.postForObject(url, null, MgapPosResponse.class);
-            logger.info("积存金头寸查询结果返回结果:code={}, {}", mgapPosResponse.getReturnCode().getType(), JSONObject.toJSONString(mgapPosResponse.getTotalAll()))
+            logger.info("积存金头寸查询结果返回结果:code={}, {}", mgapPosResponse.getReturnCode().getType(), JSONObject.toJSONString(mgapPosResponse.getTotalAll()));
             if ("S".equals(mgapPosResponse.getReturnCode())) {
                 if (null == mgapPosResponse.getTotalAll()) {
                     logger.error("查询积存金头寸信息，接口数据为空！！！查询结果：{}", mgapPosResponse);

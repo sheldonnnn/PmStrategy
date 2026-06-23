@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package com.cmbc.mds.ksd;
+
+message KsdGatewayFrame {
+  enum Type {
+    UNKNOWN = 0;
+    QUOTE = 1;
+    HEARTBEAT = 2;
+  }
+
+  Type type = 1;
+  string gateway_id = 2;
+  int64 gateway_seq_no = 3;
+  int64 sent_at = 4;
+
+  KsdQuote quote = 10;
+  KsdHeartbeat heartbeat = 11;
+}
+
+message KsdQuote {
+  string source = 1;
+  string provider = 2;
+  int64 ksd_seq_no = 3;
+  bool is_last = 4;
+  string symbol = 5;
+  string trading_day = 6;
+  string update_time = 7;
+  double open_price = 8;
+  double pre_close_price = 9;
+  double upper_limit_price = 10;
+  double lower_limit_price = 11;
+  repeated double bid_prices = 12;
+  repeated int32 bid_volumes = 13;
+  repeated double ask_prices = 14;
+  repeated int32 ask_volumes = 15;
+  int64 gateway_receive_time = 16;
+}
+
+message KsdHeartbeat {
+  string state = 1;
+  bool front_connected = 2;
+  bool logged_in = 3;
+  bool public_subscribed = 4;
+  bool private_subscribed = 5;
+  int64 last_market_data_time = 6;
+  int32 last_error_id = 7;
+  string last_error_msg = 8;
+}

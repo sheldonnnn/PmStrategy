@@ -1,52 +1,169 @@
 server:
-  port: 8080
+  port: 8090
 
 spring:
   application:
-    name: hedging-strategy
-
+    name: PmStrategy
+  ## 环境配置
+  profiles:
+    active: uat
+    log-path: /home/finesys/online/pm_strategy/logs/
+  #   log-path: D:\Users\hunkti-cuijian\Desktop\uat
+  # config:
+  #   import: classpath:application-oms.yml
+  task:
+    scheduling:
+      pool:
+        size: 10
+      thread-name-prefix: task-scheduler-
   datasource:
-    url: jdbc:oracle:thin:@localhost:1521:xe
-    username: hedging_user
-    password: password
-    driver-class-name: oracle.jdbc.OracleDriver
-    hikari:
-      maximum-pool-size: 20
-      minimum-idle: 5
-      connection-timeout: 20000
-      idle-timeout: 300000
-      max-lifetime: 1200000
-      validation-timeout: 5000
-      leak-detection-threshold: 60000
-
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
-    database-platform: org.hibernate.dialect.Oracle12cDialect
-    properties:
-      hibernate:
-        format_sql: true
-        default_batch_fetch_size: 16
-        order_inserts: true
-        order_updates: true
-        jdbc:
-          batch_size: 25
-          fetch_size: 50
-
-logging:
-  level:
-    com.cmbc: DEBUG
-    org.springframework: INFO
-    org.hibernate.SQL: DEBUG
-    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
-
----
+    driver-class-name: oracle.jdbc.driver.OracleDriver
+    url: jdbc:oracle:thin:@197.0.165.7:1521:APAMA
+    username: smartweb
+    # password: JbMrpmGgb2HpWyTH3/fPQR/iMxJBW/Q7x94ls6v/M+5BYYVKTVQuWeNzs1XYs9QWCUqpbRMOpHjrqeXsmZ0MUg==
+    password: ENC(wNOWXHyaysjp/fQl3zTjYWnpnzdSgrDoOSA+iVJPoPla9T6bX+kZZjTHT/ZOGl294hVt+cwLjfSBKmb4rasA==)
+    type: com.alibaba.druid.pool.DruidDataSource
 # For local development
-spring.profiles.active: dev
+#spring.profiles.active: dev
 
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info,metrics
+mybatis:
+  mapper-locations: classpath*:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    jdbc-type-for-null: 'NULL'
+# jpa:
+#   hibernate:
+#     ddl-auto: update
+#     show-sql: true
+#     database-platform: org.hibernate.dialect.Oracle12cDialect
+#   properties:
+#     hibernate:
+#       format_sql: true
+#       default_batch_fetch_size: 16
+#       order_inserts: true
+#       order_updates: true
+#       jdbc:
+#         batch_size: 25
+#         fetch_size: 50
+sendMessage:
+  ## 短信通知地址
+  url: http://ocrmmapp.emsgcs.ver.cmbc.cn:81/ocrmm-emlc/sendMessageFromSystem.json
+  ## 短信通知秘钥 todo 上线需要修改为生产密钥
+  key: I24DJC
+  ## 申请applyKey todo 上线需要是使用生产的applyKey
+  applyId: Z13007001
+
+risk:
+  engine:
+    disruptor:
+      ring-buffer-size: 1048576 # 2^20
+
+apama:
+  name: defaultCorrelator
+  host: 197.0.207.180
+  port: 15911
+  pm_port: 15904
+  connectTimeOutPeriod: 5000
+  retryCount: 3
+  disconnectIfSlow: true
+  autoInstanceDiscovery: true
+  strongDataInboundEventQueue: true
+  isUsing: true
+  correlator:
+    default:
+      code: default_channel_key
+
+oms:
+  channel: oms_YQ09
+
+thread:
+  poolSize: 10
+
+mgap:
+  url: http://mgapnetapp.mgap.uat.cmbc.cn:9988/mgap-netckxc-app/json/qryHedgeTotalAll
+  ## 积存金异常信息全局提醒
+  goldException:
+    url: http://197.0.207.180:8080/finesysSmartWeb/business/goldPushListener/goldStrategyWebSocket
+  mock:
+    isLock: true
+    url: http://127.0.0.1:18080/api/v1/gold/flatten/position
+
+# jasypt 加密组件
+jasypt:
+  encryptor:
+    password: hedgestrategy-jasypt-key
+#####--------------------------------MDS-------------------------------------
+
+# 性能统计与报文捕获
+app:
+  quote:
+    # 性能统计 true-开启 false-关闭
+    performance:
+      enabled: false
+      report-interval-seconds: 1
+    # MQ报文捕获 true-开启 false-关闭
+    message-capture:
+      enabled: false
+      path: logs/mq_messages_capture.log
+    dimple-message-capture:
+      enabled: false
+      path: logs/dimple_messages_capture.log
+
+# 外汇行情数据源心跳检查
+provider:
+  heartbeat:
+    # 心跳看门狗检测触发周期
+    check-interval-seconds: 5
+    # 价格源最新一次报文超时阈值
+    timeout-seconds: 10
+    # 优雅停机异步任务等待时间
+    shutdown-timeout-seconds: 5
+  distribution:
+    # 优雅停机异步任务等待时间
+    shutdown-timeout-seconds: 5
+
+# KsdGateway-Dimple行情转发小程序
+ksd:
+  gateway:
+    control-url: http://127.0.0.1:8095
+    request-timeout-millis: 3000
+    check-on-start: true
+    start-on-startup: false
+    # KsdGateway 3s发送一次，10秒没接到认为断联
+    heartbeat-timeout-seconds: 10
+
+# IBM MQ
+ibm:
+  mq:
+    queueManager: QM_FINE
+    channel: CONN.FINE
+    # UAT环境
+    connName: 197.0.102.146(1414)
+    # PRD环境
+    # connName: 198.21.14.7(1414)
+    user: mqm
+    password:
+    transportType: 1
+    userAuthenticationMQCSP: false
+    queue:
+      gs: QL.GS_COPY.FX_PRICE
+      hsbc: QL.HSBC_COPY.FX_PRICE
+      ubs: QL.UBS_COPY.FX_PRICE
+      fxall: QL.FXALL_COPY.FX_PRICE
+      cmds: QL.CMDS_COPY.FX_PRICE
+
+# 系统初始化全市场行情订阅配置
+init:
+  subscription:
+    foreign:
+      sources: GS,HSBC,UBS,FXALL,FXALL,FXALL,FXALL,FXALL,FXALL
+      providers: GS,HSBC,UBS,BNPP,BOA.,GS.,JPMC,SG,UBS.
+      symbols: XAU/USD,USD/CNH
+    dimple:
+      sources: DIMPLE
+      providers: DIMPLE
+      symbols: Au(T+D),Au(T+N1),Au(T+N2),Au99.95,Au99.99,au2606,au2608,au2610
+    cmds:
+      sources: CMDS
+      providers: CMDS
+      symbols: USD/CNY

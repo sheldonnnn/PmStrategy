@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-2-mapper.dtd">
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.cmbc.strategy.dao.GoldHedgeStrategyInstanceMapper">
 
     <resultMap id="goldHedgeInstanceResultMap" type="com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity">
@@ -13,19 +14,21 @@
         <id column="UPDATE_BY" property="updateBy" jdbcType="VARCHAR"/>
         <id column="CREATE_TIME" property="createTime" jdbcType="TIMESTAMP"/>
         <id column="UPDATE_TIME" property="updateTime" jdbcType="TIMESTAMP"/>
+        <id column="END_TIME" property="updateTime" jdbcType="TIMESTAMP"/>
         <id column="TRADER_NO" property="traderNo" jdbcType="VARCHAR"/>
+        <id column="STRATEGY_NAME" property="strategyName" jdbcType="VARCHAR"/>
         <id column="REMARK" property="remark" jdbcType="VARCHAR"/>
         <id column="DEL_FLAG" property="delFlag" jdbcType="VARCHAR"/>
         <id column="TAG_NAME" property="tagName" jdbcType="VARCHAR"/>
-        <id column="END_TIME" property="endTime" jdbcType="TIMESTAMP"/>
-        <id column="INITIAL_POSITION_SNAP" property="initialPositionSnap" jdbcType="VARCHAR"/>
-        <id column="FINAL_POSITION_SNAP" property="finalPositionSnap" jdbcType="VARCHAR"/>
-        <id column="CUM_QTY" property="cumQty" jdbcType="DECIMAL"/>
-        <id column="CUM_AMOUNT" property="cumAmount" jdbcType="DECIMAL"/>
+        <result column="INITIAL_POSITION_SNAP" property="initialPositionSnap" jdbcType="VARCHAR"/>
+        <result column="FINAL_POSITION_SNAP" property="finalPositionSnap" jdbcType="VARCHAR"/>
+        <result column="CUM_QTY" property="cumQty" jdbcType="DECIMAL"/>
     </resultMap>
 
     <sql id="goldHedgeInstanceSql">
-        INSTANCE_ID, STRATEGY_ID, SYMBOL_CONFIG_ID, TAG_CODE, TAG_NAME, STATUS, CONFIG_SNAPSHOT, CREATE_BY, UPDATE_BY, CREATE_TIME, UPDATE_TIME, TRADER_NO, REMARK, DEL_FLAG, END_TIME, INITIAL_POSITION_SNAP, FINAL_POSITION_SNAP, CUM_QTY, CUM_AMOUNT
+        INSTANCE_ID,STRATEGY_ID,STRATEGY_NAME,SYMBOL_CONFIG_ID,TAG_CODE,TAG_NAME,STATUS,CONFIG_SNAPSHOT,
+        CREATE_BY,UPDATE_BY,CREATE_TIME,UPDATE_TIME,END_TIME,TRADER_NO,REMARK,DEL_FLAG,INITIAL_POSITION_SNAP,
+        FINAL_POSITION_SNAP,CUM_QTY
     </sql>
 
     <insert id="insert" parameterType="com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity">
@@ -45,67 +48,71 @@
         TRADER_NO,
         REMARK,
         DEL_FLAG,
-        INITIAL_POSITION_SNAP
-        ) VALUES (
-        #{instanceId, jdbcType=VARCHAR},
-        #{tagName, jdbcType=VARCHAR},
-        #{strategyId, jdbcType=VARCHAR},
-        #{symbolConfigId, jdbcType=VARCHAR},
-        #{tagCode, jdbcType=VARCHAR},
-        #{status, jdbcType=VARCHAR},
-        #{configSnapshot, jdbcType=VARCHAR},
-        #{createBy, jdbcType=VARCHAR},
-        #{updateBy, jdbcType=VARCHAR},
-        #{createTime, jdbcType=TIMESTAMP},
-        #{updateTime, jdbcType=TIMESTAMP},
-        #{traderNo, jdbcType=VARCHAR},
-        #{remark, jdbcType=VARCHAR},
-        #{delFlag, jdbcType=VARCHAR},
-        #{initialPositionSnap, jdbcType=VARCHAR}
+        INITIAL_POSITION_SNAP,
+        STRATEGY_NAME
+        ) VALUES
+        (
+        #{instanceId,jdbcType=VARCHAR},
+        #{tagName,jdbcType=VARCHAR},
+        #{strategyId,jdbcType=VARCHAR},
+        #{symbolConfigId,jdbcType=VARCHAR},
+        #{tagCode,jdbcType=VARCHAR},
+        #{status,jdbcType=VARCHAR},
+        #{configSnapshot,jdbcType=VARCHAR},
+        #{createBy,jdbcType=VARCHAR},
+        #{updateBy,jdbcType=VARCHAR},
+        #{createTime,jdbcType=TIMESTAMP},
+        #{updateTime,jdbcType=TIMESTAMP},
+        #{traderNo,jdbcType=VARCHAR},
+        #{remark,jdbcType=VARCHAR},
+        #{delFlag,jdbcType=VARCHAR},
+        #{initialPositionSnap,jdbcType=VARCHAR},
+        #{strategyName,jdbcType=VARCHAR}
         )
     </insert>
 
     <update id="updateStatusByInstanceId">
         UPDATE GOLD_HEDGE_STRATEGY_INSTANCE
-        SET STATUS = #{status, jdbcType=VARCHAR},
-        REMARK = #{reason, jdbcType=VARCHAR}
-        WHERE INSTANCE_ID = #{instanceId, jdbcType=VARCHAR}
+        SET STATUS = #{status,jdbcType=VARCHAR},
+        REMARK = #{reason,jdbcType=VARCHAR}
+        WHERE INSTANCE_ID = #{instanceId,jdbcType=VARCHAR}
     </update>
 
-    <update id="updateInstanceSnapshot" parameterType="com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity">
+    <update id="updateInstanceSnapshot">
         UPDATE GOLD_HEDGE_STRATEGY_INSTANCE
-        SET STATUS = #{status, jdbcType=VARCHAR},
-            UPDATE_TIME = #{updateTime, jdbcType=TIMESTAMP},
-            END_TIME = #{endTime, jdbcType=TIMESTAMP},
-            FINAL_POSITION_SNAP = #{finalPositionSnap, jdbcType=VARCHAR},
-            CUM_QTY = #{cumQty, jdbcType=DECIMAL},
-            CUM_AMOUNT = #{cumAmount, jdbcType=DECIMAL}
-        WHERE INSTANCE_ID = #{instanceId, jdbcType=VARCHAR}
+        SET STATUS = #{status,jdbcType=VARCHAR},
+        UPDATE_TIME = #{updateTime,jdbcType=VARCHAR},
+        END_TIME = #{endTime,jdbcType=VARCHAR},
+        FINAL_POSITION_SNAP = #{finalPositionSnap,jdbcType=VARCHAR},
+        CUM_QTY = #{cumQty,jdbcType=DECIMAL},
+        REMARK = #{remark,jdbcType=VARCHAR}
+        WHERE INSTANCE_ID = #{instanceId,jdbcType=VARCHAR}
     </update>
 
     <select id="queryInstance" resultMap="goldHedgeInstanceResultMap">
         SELECT
         <include refid="goldHedgeInstanceSql"/>
-        FROM GOLD_HEDGE_STRATEGY_INSTANCE sc
+        FROM
+        GOLD_HEDGE_STRATEGY_INSTANCE sc
         <where>
             AND sc.DEL_FLAG = '0'
             <if test="instanceId != null and instanceId != ''">
-                AND sc.INSTANCE_ID = #{instanceId, jdbcType=VARCHAR}
+                AND sc.INSTANCE_ID = #{instanceId,jdbcType=VARCHAR}
             </if>
             <if test="strategyId != null and strategyId != ''">
-                AND sc.STRATEGY_ID = #{strategyId, jdbcType=VARCHAR}
+                AND sc.STRATEGY_ID = #{strategyId,jdbcType=VARCHAR}
             </if>
             <if test="symbolConfigId != null and symbolConfigId != ''">
-                AND sc.SYMBOL_CONFIG_ID = #{symbolConfigId, jdbcType=VARCHAR}
+                AND sc.SYMBOL_CONFIG_ID = #{symbolConfigId,jdbcType=VARCHAR}
             </if>
             <if test="tagCode != null and tagCode != ''">
-                AND sc.TAG_CODE = #{tagCode, jdbcType=VARCHAR}
+                AND sc.TAG_CODE = #{tagCode,jdbcType=VARCHAR}
             </if>
             <if test="traderNo != null and traderNo != ''">
-                AND sc.TRADER_NO = #{traderNo, jdbcType=VARCHAR}
+                AND sc.TRADER_NO = #{traderNo,jdbcType=VARCHAR}
             </if>
             <if test="status != null and status != ''">
-                AND sc.STATUS = #{status, jdbcType=VARCHAR}
+                AND sc.STATUS = #{status,jdbcType=VARCHAR}
             </if>
         </where>
         ORDER BY sc.CREATE_TIME DESC
@@ -114,8 +121,8 @@
     <select id="queryInfoByInstanceId" resultMap="goldHedgeInstanceResultMap" parameterType="string">
         SELECT
         <include refid="goldHedgeInstanceSql"/>
-        FROM GOLD_HEDGE_STRATEGY_INSTANCE sc
-        where sc.INSTANCE_ID = #{instanceId, jdbcType=VARCHAR} AND sc.DEL_FLAG = '0'
+        FROM
+        GOLD_HEDGE_STRATEGY_INSTANCE sc
+        where sc.INSTANCE_ID = #{instanceId,jdbcType=VARCHAR} AND sc.DEL_FLAG = '0'
     </select>
-
 </mapper>

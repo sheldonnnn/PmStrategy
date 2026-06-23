@@ -5,8 +5,8 @@ import lombok.Data;
 @Data
 public class MarketDateRequest {
 
-    private String symbol;   // 合约代码
-    private String exchange;    // 交易所
+    private String symbol;    // 合约代码
+    private String exchange;      // 交易所
     private String provider; // 具体提供方 (LP)
 
     /**

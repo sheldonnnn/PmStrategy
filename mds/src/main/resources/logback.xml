@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="true" scanPeriod="60 seconds">
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="DEBUG">
+        <appender-ref ref="CONSOLE" />
+    </root>
+
+    <logger name="com.cmbc.mds.forex" level="DEBUG" />
+
+    <logger name="com.cmbc.mds.monitor" level="INFO" />
+
+    <logger name="akka" level="DEBUG" />
+
+    <!-- ===== 关闭 JMS / IBM MQ 入职启动打印 ===== -->
+    <!-- IBM MQ 客户端连接日志 -->
+    <logger name="com.ibm.mq" level="WARN" />
+    <logger name="com.ibm.msg.client" level="WARN" />
+    <!-- Spring JMS 自动配置 & 框架日志 -->
+    <logger name="org.springframework.jms" level="WARN" />
+    <logger name="org.springframework.boot.autoconfigure.jms" level="WARN" />
+    <!-- IBM MQ Spring Boot Starter -->
+    <logger name="com.ibm.mq.spring" level="WARN" />
+</configuration>

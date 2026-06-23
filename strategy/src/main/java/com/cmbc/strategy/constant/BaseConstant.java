@@ -1,6 +1,5 @@
 package com.cmbc.strategy.constant;
 
-import javax.persistence.criteria.CriteriaBuilder;
 import java.math.BigDecimal;
 
 public class BaseConstant {

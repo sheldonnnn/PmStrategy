@@ -1,6 +1,5 @@
 package com.cmbc.common.util.concurrent;
 
-import lombok.extern.slf4j.Slf4j;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -10,7 +9,6 @@ import java.util.concurrent.TimeUnit;
  * 业务通用的哈希分片多线程池
  * 保证相同 routingKey 的任务绝对串行执行于同一线程，实现无锁高并发安全。
  */
-@Slf4j
 public class ShardingThreadPool {
 
     private final int shardCount;
@@ -94,7 +92,7 @@ public class ShardingThreadPool {
                 try {
                     // 最多等 5 秒，让队列里的存量事件消化完
                     if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                        log.warn("分片线程池未能如期优雅关闭，强行打断！");
+//                        log.warn("分片线程池未能如期优雅关闭，强行打断！");
                         executor.shutdownNow();
                     }
                 } catch (InterruptedException e) {

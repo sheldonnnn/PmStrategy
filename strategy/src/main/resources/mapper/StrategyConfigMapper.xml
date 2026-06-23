@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cmbc.strategy.dao.StrategyConfigMapper">
+
+    <resultMap id="strategyConfigResultMap" type="com.cmbc.strategy.domain.entity.StrategyConfigEntity">
+        <result property="strategyName" column="strategy_name"/>
+        <result property="configId" column="config_id"/>
+        <result property="tradeTag" column="trade_tag"/>
+        <result property="futureBidSpread" column="future_bid_spread"/>
+        <result property="futureOfrSpread" column="future_ofr_spread"/>
+        <result property="spotMaxOrderQty" column="spot_max_order_qty"/>
+        <result property="orderIntervalSec" column="order_interval_sec"/>
+        <result property="maxQtySum" column="max_qty_sum"/>
+        <result property="orderReminder" column="order_reminder"/>
+        <result property="chaseNumber" column="chase_number"/>
+        <result property="chaseOrderDeviation" column="chase_order_deviation"/>
+        <result property="orderTimeoutSec" column="order_timeout_sec"/>
+        <result property="hedgingMaxTime" column="hedging_max_time"/>
+        <result property="offsetFlag" column="offset_flag"/>
+        <result property="chasePriceType" column="chase_price_type"/>
+        <result property="futureBuyChaseSpread" column="future_buy_chase_spread"/>
+        <result property="futureSellChaseSpread" column="future_sell_chase_spread"/>
+        <result property="chaseMaxOrderQty" column="chase_max_order_qty"/>
+        <result property="chaseMaxDuration" column="chase_max_duration"/>
+        <result property="chaseOrderTimeout" column="chase_order_timeout"/>
+        <result property="createUser" column="create_user"/>
+        <result property="createDate" column="create_date"/>
+        <result property="updateDate" column="update_date"/>
+        <result property="updatedUser" column="updated_user"/>
+        <result property="imsWarnName" column="ims_warn_name"/>
+        <result property="imsWarnInfo" column="ims_warn_info"/>
+        <result property="checkStatus" column="check_status"/>
+        <result property="futureMaxOrderQty" column="future_max_order_qty"/>
+        <result property="xauMaxOrderQty" column="xau_max_order_qty"/>
+        <result property="chaseFutureMaxOrderQty" column="chase_future_max_order_qty"/>
+        <result property="chaseSpotMaxOrderQty" column="chase_spot_max_order_qty"/>
+        <result property="chaseXauMaxOrderQty" column="chase_xau_max_order_qty"/>
+        <result property="spotOfrSpread" column="spot_ofr_spread"/>
+        <result property="spotBidSpread" column="spot_bid_spread"/>
+        <result property="spotBuyChaseSpread" column="spot_buy_chase_spread"/>
+        <result property="spotSellChaseSpread" column="spot_sell_chase_spread"/>
+        <result property="chaseMaxQtySum" column="chase_max_qty_sum"/>
+        <result property="tradeMode" column="trade_mode"/>
+        <result property="maxSpread" column="max_spread"/>
+        <result property="sgeLimitBuffer" column="SGE_LIMIT_BUFFER"/>
+        <result property="shfeLimitBuffer" column="SHFE_LIMIT_BUFFER"/>
+        <result property="isChase" column="IS_CHASE" />
+    </resultMap>
+
+    <select id="selectById" parameterType="string" resultMap="strategyConfigResultMap">
+        SELECT * FROM gold_hedge_strategy_config WHERE config_id = #{configId}
+    </select>
+
+</mapper>

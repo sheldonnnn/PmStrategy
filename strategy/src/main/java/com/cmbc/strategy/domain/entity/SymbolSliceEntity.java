@@ -9,19 +9,13 @@ import java.util.List;
 @Data
 public class SymbolSliceEntity {
 
-
-    /**
-     * 主键ID
-     */
-    private String id;
-
     /**
      * 每个合约配置的唯一标识
      */
     private String configId;
 
     /**
-     * 合约类型
+     * 境内境外
      * DB: CONTRACT_TYPE (VARCHAR2 2)
      */
     private String domesticType;
@@ -36,19 +30,13 @@ public class SymbolSliceEntity {
      * 交易开始时间 (格式 HH:mm:ss)
      * DB: TRADE_START_TIME (VARCHAR2 10)
      */
-    private LocalTime startTime;
+    private LocalTime tradeStartTime;
 
     /**
      * 交易结束时间 (格式 HH:mm:ss)
      * DB: TRADE_END_TIME (VARCHAR2 10)
      */
-    private LocalTime endTime;
-
-    /**
-     * 交易对手
-     * DB: COUNTER_PARTY (VARCHAR2 50)
-     */
-    private List<String> sources;
+    private LocalTime tradeEndTime;
 
     /**
      * [标黄] 多头平仓触发线 (达到此敞口值触发买入平盘)
@@ -75,11 +63,10 @@ public class SymbolSliceEntity {
     private BigDecimal endShortPosition;
 
     /**
-     * 外汇货币对 (用于国际金折算，如 USDCNH)
+     * 外汇货币对 (用于国际金折算, 如 USDCNH)
      * DB: FX_SYMBOL (VARCHAR2 20)
      */
     private String fxSymbol;
-
-    private BigDecimal unit;
-
+    private String groupName;
+    private String groupId;
 }

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="true" scanPeriod="10 seconds">
+
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" />
+    <springProperty scope="context" name="PROFILE_ACTIVE" source="spring.profiles.active" defaultValue="dev"/>
+    <springProperty scope="context" name="LOG_PATH" source="spring.profiles.log-path" defaultValue="./logs"/>
+<!--    <property name="LOG_ROOT" value="./logs" />-->
+<!--    <property name="LOG_PATH" value="${LOG_ROOT}/" source="spring.profiles.log-path" />-->
+    <property name="LOG_PATTERN" value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"/>
+<!--日志保留配置 -->
+    <property name="MAX_HISTORY" value="100"/>
+    <property name="MAX_FILE_SIZE" value="100MB"/>
+    <property name="TOTAL_SIZE_CAP" value="5GB"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="FILE_INFO" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/info.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/info-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${MAX_HISTORY}</maxHistory>
+            <totalSizeCap>${TOTAL_SIZE_CAP}</totalSizeCap>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>INFO</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <appender name="FILE_ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/error.log</file>
+        <encoder>
+            <pattern>${LOG_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/error-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${MAX_HISTORY}</maxHistory>
+            <totalSizeCap>${TOTAL_SIZE_CAP}</totalSizeCap>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+<!--        </root>-->
+<!--    </then>-->
+<!--</if>-->
+<!--&lt;!&ndash; 测试环境 &ndash;&gt;-->
+<!--<if condition ='${PROFILE_ACTIVE}.equals("sit")'>-->
+<!--    <then>-->
+<!--        <root level="DEBUG">-->
+<!--            <appender-ref ref="CONSOLE"/>-->
+<!--            <appender-ref ref="FILE_INFO"/>-->
+<!--            <appender-ref ref="FILE_ERROR"/>-->
+<!--        </root>-->
+<!--    </then>-->
+<!--</if>-->
+<!--<if condition ='${PROFILE_ACTIVE}.equals("prd")'>-->
+<!--    <then>-->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE_INFO"/>
+        <appender-ref ref="FILE_ERROR"/>
+    </root>
+<!--    </then>-->
+<!--    <appender-ref ref="CONSOLE" />-->
+<!--    &lt;!&ndash;        <appender-ref ref="FILE_INFO" />&ndash;&gt;-->
+<!--    &lt;!&ndash;        <appender-ref ref="FILE_ERROR" />&ndash;&gt;-->
+<!--</root>-->
+<!--    </springProfile>-->
+
+<!--    <springProfile name="test,prod">-->
+<!--        <root level="INFO">-->
+<!--            <appender-ref ref="FILE_INFO" />-->
+<!--            <appender-ref ref="FILE_ERROR" />-->
+<!--        </root>-->
+<!--    </springProfile>-->
+
+</configuration>

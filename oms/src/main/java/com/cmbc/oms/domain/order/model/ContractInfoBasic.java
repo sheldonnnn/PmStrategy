@@ -11,7 +11,7 @@ public class ContractInfoBasic {
     private String symbol;
     private String variety;
 
-        private BigDecimal unit;
+        private BigDecimal unit;//合约乘数
 
         private String measureUnit;
 

@@ -1,8 +1,10 @@
 package com.cmbc.strategy.integration.impl;
 
 import com.alibaba.fastjson.JSONObject;
-import com.cmbc.mds.service.MergeQuotesCacheService;
-import com.cmbc.strategy.domain.model.market.PloyPrices;
+import com.cmbc.mds.forex.quotes.cacheservice.MergeQuotesCacheService;
+import com.cmbc.mds.forex.quotes.dto.PloyPrices;
+import com.cmbc.mds.forex.subscription.controller.StrategySubscriptionController;
+import com.cmbc.mds.forex.subscription.dto.StrategySubReq;
 import com.cmbc.strategy.domain.model.market.SubscribeRequest;
 import com.cmbc.strategy.integration.IMarketDataService;
 import lombok.extern.slf4j.Slf4j;
@@ -14,7 +16,9 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * 行情服务实现类
+ * @Author: Cly
+ * @Date: 2026/03/02 14:51
+ * @Description:
  */
 @Slf4j
 @Component
@@ -22,13 +26,11 @@ public class MarketDataService implements IMarketDataService {
 
     @Autowired
     private StrategySubscriptionController strategySubscriptionController;
-
     @Autowired
     private MergeQuotesCacheService mergeQuotesCacheService;
 
     @Override
     public void subscribe(List<SubscribeRequest> subscribeReqs, String instanceId, String userId) {
-        // 订阅格式转换为mds格式
         List<StrategySubReq> subscribeRequests = collectSubscriptions(subscribeReqs, instanceId, userId);
         log.info("策略发送订阅请求: {}", JSONObject.toJSONString(subscribeRequests));
         strategySubscriptionController.addBatchStrategySubscription(subscribeRequests);
@@ -36,7 +38,7 @@ public class MarketDataService implements IMarketDataService {
 
     @Override
     public void unsubscribe(List<SubscribeRequest> subscribeReqs) {
-        // 暂未实现或根据业务逻辑补充
+
     }
 
     @Override
@@ -44,21 +46,17 @@ public class MarketDataService implements IMarketDataService {
         // 1. 解析对手方列表
         List<String> providers = new ArrayList<>();
         List<String> sources = new ArrayList<>();
-
         if ((counterparties == null || counterparties.trim().isEmpty()) || (exchId == null || exchId.trim().isEmpty())) {
             return null;
         } else {
-            // 关键：按"#"拆分，并去除每一项的空格
+            // 关键：按#拆分，并去除每一项的空格
             providers = Arrays.asList(counterparties.split("#"));
             sources = Arrays.asList(exchId.split("#"));
         }
-
-        return mergeQuotesCacheService.getPolyPrices(sources, providers, symbol);
+        return null; 
     }
 
-    /**
-     * // 订阅格式转换为mds格式
-     */
+    // 订阅格式转换为mds格式
     private List<StrategySubReq> collectSubscriptions(List<SubscribeRequest> subscribeReqs, String instanceId, String userId) {
         List<StrategySubReq> subscribeRequests = new ArrayList<>();
 
@@ -72,16 +70,15 @@ public class MarketDataService implements IMarketDataService {
             // 1. 解析对手方列表
             List<String> providers = new ArrayList<>();
             List<String> sources = new ArrayList<>();
-
             if ((counterparties == null || counterparties.trim().isEmpty()) || (exchId == null || exchId.trim().isEmpty())) {
                 continue;
             } else {
-                // 关键：按"#"拆分
+                // 关键：按#拆分，并去除每一项的空格
                 providers = Arrays.asList(counterparties.split("#"));
                 sources = Arrays.asList(exchId.split("#"));
             }
 
-            // 订阅请求组装
+            // 订阅请求
             StrategySubReq req = new StrategySubReq();
             req.setStrategyId(instanceId);
             req.setProviders(providers);
@@ -94,4 +91,3 @@ public class MarketDataService implements IMarketDataService {
         return subscribeRequests;
     }
 }
-

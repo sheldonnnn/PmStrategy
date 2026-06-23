@@ -1,13 +1,10 @@
 package com.cmbc.strategy.integration;
 
-import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
+import com.cmbc.oms.domain.exposure.model.HedgePositionSummary;
 import com.cmbc.oms.domain.exposure.model.PositionSnapshot;
-
-import java.math.BigDecimal;
 
 public interface IPositionService {
 
-    public HedgePositionSummary getMgapPositionSummary(); // 查积存金头寸
-    public PositionSnapshot getFolderPositionSummary(String folderId); // 查已平盘头寸
-
+    public PositionSnapshot getFolderPositionSummary(String folderId); // 查积folder维度汇总头寸
+    public HedgePositionSummary getMgapPositionSummary();
 }

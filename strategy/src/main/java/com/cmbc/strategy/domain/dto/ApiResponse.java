@@ -1,13 +1,11 @@
 package com.cmbc.strategy.domain.dto;
 
-public enum ApiResponse {
+import lombok.Data;
 
-    success(),
+@Data
+public class ApiResponse {
 
-    /**
-     * 1: 平盘条件验证中 (Monitoring)
-     * 含义：[运行态] 策略正在监控头寸，等待触发阈值。
-     */
-    error();
+    private String code;
 
+    private String message;
 }

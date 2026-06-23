@@ -1,0 +1,98 @@
+# Quote diagnostics
+app:
+  quote:
+    performance:
+      enabled: false
+      report-interval-seconds: 1
+    message-capture:
+      enabled: false
+      path: logs/mq_messages_capture.log
+    dimple-message-capture:
+      enabled: false
+      path: logs/dimple_messages_capture.log
+
+jasypt:
+  encryptor:
+    password: fxquote-jasypt-key
+
+provider:
+  heartbeat:
+    check-interval-seconds: 1000
+    timeout-seconds: 1000
+    shutdown-timeout-seconds: 5
+  distribution:
+    shutdown-timeout-seconds: 5
+
+# IBM MQ Configuration
+ibm:
+  mq:
+    queueManager: QM_FINE
+    channel: CONN.FINE
+    connName: 197.0.102.146(1414)
+    user: "ENC(g+7lWzf3Z/Gna3RscV+NOsd1B6qNzeCvs9CvRBHUQO4wIpA1C8z5ZNleZZXR0Tif)"
+    password: "ENC(U1p7D/OhhVdQeyf1gqBS2zVuBV9B0Cdm1toeFzpLD18d65RN4dTXY+MCtqJsE7V3)"
+    transportType: 1
+    userAuthenticationMQCSP: false
+    queue:
+      gs: QL.GS_COPY.FX_PRICE
+      hsbc: QL.HSBC_COPY.FX_PRICE
+      ubs: QL.UBS_COPY.FX_PRICE
+      fxall: QL.FXALL_COPY.FX_PRICE
+      cmds: QL.CMDS_COPY.FX_PRICE
+
+ksd:
+  gateway:
+    control-url: http://127.0.0.1:8095
+    request-timeout-millis: 3000
+    check-on-start: true
+    start-on-startup: false
+    heartbeat-timeout-seconds: 10
+
+# 系统初始化全市场行情订阅配置
+init:
+  subscription:
+    foreign:
+      sources:
+        - GS
+        - HSBC
+        - UBS
+        - FXALL
+        - FXALL
+        - FXALL
+        - FXALL
+        - FXALL
+        - FXALL
+      providers:
+        - GS
+        - HSBC
+        - UBS
+        - BNPP
+        - BOA.
+        - GS.
+        - JPMC
+        - SG
+        - UBS.
+      symbols:
+        - XAU/USD
+        - USD/CNH
+    dimple:
+      sources:
+        - DIMPLE
+      providers:
+        - DIMPLE
+      symbols:
+        - Au(T+D)
+        - Au(T+N1)
+        - Au(T+N2)
+        - Au99.95
+        - Au99.99
+        - au2606
+    cmds:
+      sources:
+        - CMDS
+      providers:
+        - CMDS
+      symbols:
+        - USD/CNY
+server:
+  port: 9090

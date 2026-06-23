@@ -1,42 +1,38 @@
 package com.cmbc.strategy.domain.model.config;
+
 import com.cmbc.strategy.domain.dto.ClientMemberInfo;
 import lombok.Data;
+
 import java.math.BigDecimal;
+import java.time.LocalTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.time.LocalTime;
 
-/**
- * 策略配置类
- */
 @Data
 public class HedgeStrategyConfig extends StrategyConfig {
 
     private String instanceId;
 
-    // ==========================================
+    //=========================================|
     // 1. 基础信息配置 (Basic Info)
-    // ==========================================
+    //=========================================|
 
-    private String strategyId;
+    private String strategyName;
     private String tradeTag;
-    private String priceBaseType;
+    private String orderPriceBase;
     private BigDecimal futureBidSpread;
     private BigDecimal futureOfrSpread;
     private BigDecimal spotMaxOrderQty;
     private BigDecimal orderIntervalSec;
     private BigDecimal maxQtySum;
-    private String chaseFlatOrderType;
     private Integer chaseNumber;
     private BigDecimal chaseOrderDeviation;
     private BigDecimal orderTimeoutSec;
     private BigDecimal hedgingMaxTime;
-    private String offsetFlag;
     private String chasePriceType;
     private BigDecimal futureBuyChaseSpread;
     private BigDecimal futureSellChaseSpread;
-    private BigDecimal chaseMaxOrderQty;
     private BigDecimal chaseMaxDuration;
     private BigDecimal chaseOrderTimeout;
     private String createUser;
@@ -53,18 +49,20 @@ public class HedgeStrategyConfig extends StrategyConfig {
     private BigDecimal spotOfrSpread;
     private BigDecimal spotBidSpread;
     private BigDecimal spotBuyChaseSpread;
-    private BigDecimal spotSellChaseSpread;
     private BigDecimal chaseMaxQtySum;
-    private String tradeNode;
+    private BigDecimal sgeLimitBuffer; // 上金所涨跌停
+
+    private BigDecimal shfeLimitBuffer; // 上期所涨跌停
+    private String tradeMode;
     private String exchId;
     private String counterParty;
     private String fxSymbol;
-    private BigDecimal maxSpread;
-    private BigDecimal maxVolumn;
+    private BigDecimal maxSpread;// 境外合约买卖最大点差
+    private BigDecimal maxVolume;// 最大交易量
 
     /**
      * 分时段平盘规则列表
-     * 对应关系：一条策略配置 -> 多条时间段规则
+     * 对应关系: 一条策略配置 -> 多条时间段规则
      */
     private List<SymbolTimeSlice> symbolTimeSlices;
 
@@ -73,7 +71,8 @@ public class HedgeStrategyConfig extends StrategyConfig {
     private String account;
     private String tagCode;
     private String tagName;
-    private Map<String, ClientMemberInfo> clientMemberInfo;
+    private String isChase; //是否追单
+    private Map<String,ClientMemberInfo> clientMemberInfo;
 
     /**
      * 查找对应合约
