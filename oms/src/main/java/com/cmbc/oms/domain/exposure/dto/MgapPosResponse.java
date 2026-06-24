@@ -1,11 +1,15 @@
 package com.cmbc.oms.domain.exposure.dto;
 
+import com.cmbc.oms.controller.dto.RCode;
+import com.cmbc.oms.domain.exposure.model.MgapPositionSnapshot;
 import lombok.Data;
 
-@Data
-public class MgapPosResponse {
+import java.io.Serializable;
+import java.util.Map;
 
-    private String returnCode;
-    private Map<String,MgapPositionSnapShot> totalAll;
+@Data
+public class MgapPosResponse implements Serializable {
+    private RCode returnCode;
+    private Map<String, MgapPositionSnapshot> totalAll;
 
 }

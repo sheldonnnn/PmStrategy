@@ -1,21 +1,13 @@
 package com.cmbc.oms.domain.exposure.service;
 
-import com.cmbc.oms.domain.order.model.OrderUpdate;
+import com.cmbc.oms.domain.order.model.ExecutionReport;
 
-/**
- * 头寸组 (Folder) 路由接口。
- * 用于根据订单事件或请求等上下文信息，动态决定其应该归属的资金头寸管理组 (folderId)。
- */
 public interface IPositionFolderRouter {
-
-    /**
-     * 判断当前路由规则是否支持处理该订单事件
-     */
-    boolean supports(OrderUpdate event);
-
-    /**
-     * 根据订单事件计算出对应的 folderId
-     */
-    String route(OrderUpdate event);
-
+    
+    //基于风控路由规则判断是否匹配此订单
+    public boolean support(ExecutionReport executionReport);
+    
+    //根据订单事件返回对应folderID
+    public String route(ExecutionReport executionReport);
+    
 }

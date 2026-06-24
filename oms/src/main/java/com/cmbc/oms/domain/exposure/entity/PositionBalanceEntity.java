@@ -7,43 +7,44 @@ import java.time.LocalDateTime;
 
 @Data
 public class PositionBalanceEntity {
-
+    /** 头寸快照ID, 唯一标识一个头寸快照 */
     private String positionId;
-
-    /** 系统ID，标识所属系统 */
+    
+    /** 系统ID, 标识所属系统 */
     private String systemId;
-
-    /** 归属组组，标识头寸所属的组别 */
+    
+    /** 归属分组, 标识头寸所属的组别 */
     private String folderId;
-
-    /** 合约，标识交易的合约代码 */
+    
+    /** 合约, 标识交易的合约代码 */
     private String symbol;
-
-    /** 多头成交量(手)，多头方向的成交量 */
+    
+    /** 多头成交量(手), 多头方向的成交量 */
     private BigDecimal longQty;
-
-    /** 多头重量(g)，多头方向的重量 */
+    
+    /** 多头重量(g), 多头方向的重量 */
     private BigDecimal longWeight;
-
-    /** 多头金额，多头方向的金额 */
+    
+    /** 多头金额, 多头方向的金额 */
     private BigDecimal longAmount;
-
-    /** 空头成交量，空头方向的成交量 */
+    
+    /** 空头成交量, 空头方向的成交量 */
     private BigDecimal shortQty;
-
-    /** 空头重量(g)，空头方向的重量 */
+    
+    /** 空头重量(g), 空头方向的重量 */
     private BigDecimal shortWeight;
-
-    /** 空头金额，空头方向的金额 */
+    
+    /** 空头金额, 空头方向的金额 */
     private BigDecimal shortAmount;
-
-    /** 更新时间，记录数据的最后更新时间 */
+    
+    /** 更新时间, 记录数据的最后更新时间 */
     private LocalDateTime updateTime;
-
     private LocalDateTime createTime;
-
+    
+    /** 交易日期, 记录交易发生的日期 */
     private String statisticDate;
-    private String domesticType;//境内外标识
+    
+    /** 境内外标识, 标识交易的境内外类型 */
+    private String domesticType;
     private BigDecimal unit;
-
 }
