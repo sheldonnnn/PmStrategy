@@ -26,9 +26,9 @@ public class StrategyContext {
 
     private ExceptionNotificationService exceptionNotificationService;
 
-    private IHedgeStrategyInstanceService hedgeStrategyInstanceService;
+    private IHedgeStrategyPersistService hedgeStrategyInstanceService;
 
-    private IHedgeStrategyPushService hedgeStrategyPushService;
+    private IHedgeStrategyWebSocketService hedgeStrategyPushService;
 
     private KsdStaticQuoteCacheService ksdStaticQuoteCacheService;
 

@@ -1,44 +1,45 @@
 package com.cmbc.strategy.engine.hedge.instance;
 
+import com.cmbc.mds.forex.common.constants.BaseConstants;
 import com.cmbc.mds.forex.quotes.dto.PloyPrices;
-import com.cmbc.oms.constant.BaseConstants;
-import com.cmbc.oms.controller.dto.StrategyOrder;
-import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
-import com.cmbc.oms.domain.order.model.ExecutionReport;
-import com.cmbc.oms.domain.order.model.NewOrder;
-import com.cmbc.strategy.constant.*;
+import com.cmbc.mds.ksd.cache.KsdStaticQuoteInfo;
+import com.cmbc.oms.controller.dto.StrategyOrderRes;
+import com.cmbc.oms.infrastructure.facadeimpl.apama.bean.BusinessConstant;
 import com.cmbc.strategy.domain.dto.ClientMemberInfo;
-import com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity;
-import com.cmbc.strategy.domain.model.config.StrategyStatSummary;
 import com.cmbc.strategy.domain.model.hedge.GoldStrategyBean;
+import com.cmbc.oms.controller.dto.StrategyOrder;
+import com.cmbc.oms.domain.exposure.model.HedgePositionSummary;
+import com.cmbc.strategy.domain.model.config.StrategyStatSummary;
+import com.cmbc.oms.domain.order.model.ExecutionReport;
+import com.cmbc.strategy.constant.*;
+import com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity;
 import com.cmbc.strategy.domain.model.market.SubscribeRequest;
 import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
-import com.cmbc.strategy.engine.context.StrategyContext;
-import com.cmbc.strategy.engine.core.timer.StrategyEvent;
-import com.cmbc.strategy.engine.hedge.event.HedgeTimeSliceEvent;
 import com.cmbc.strategy.engine.core.BaseStrategy;
+import com.cmbc.strategy.engine.core.timer.StrategyEventListener;
+import com.cmbc.strategy.engine.hedge.event.HedgeTimeSliceEvent;
 import com.cmbc.strategy.engine.hedge.trigger.HedgeTrigger;
+import com.cmbc.strategy.engine.context.StrategyContext;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.util.CollectionUtils;
-
 import org.slf4j.helpers.MessageFormatter;
-import org.slf4j.helpers.FormattingTuple;
 
+import java.util.concurrent.atomic.AtomicReference;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalTime;
-import java.util.ArrayList;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 
 /**
  * 套利策略实例实现类
  */
 @Slf4j
-public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> implements com.cmbc.strategy.engine.core.timer.StrategyEventListener<HedgeTimeSliceEvent> {
+public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> implements StrategyEventListener<HedgeTimeSliceEvent> {
 
     // === 内部变量与组件 ===
     private final Map<String, StrategyStatSummary> HEDGE_STRATEGY_MAP = new ConcurrentHashMap<>();
@@ -122,25 +123,18 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
         entity.setStatus(StrategyStatus.STOPPED.getCode());
         entity.setUpdateTime(new java.util.Date());
         entity.setEndTime(new java.util.Date());
-        entity.setFinalPosition(getClientPosition());
+        entity.setFinalPositionSnapshot(getHedgePositionSummary());
 
         BigDecimal cumQty = BigDecimal.ZERO;
         BigDecimal cumAmount = BigDecimal.ZERO;
-        for (com.cmbc.strategy.domain.model.StrategyStatSummary summary : HEDGE_STRATEGY_MAP.values()) {
+        for (StrategyStatSummary summary : HEDGE_STRATEGY_MAP.values()) {
             if (summary.getCumQty() != null) {
                 cumQty = cumQty.add(summary.getCumQty());
             }
         }
         entity.setCumQty(cumQty);
 
-        if (strategyContext.getGoldHedgeIoPool() != null) {
-            strategyContext.getGoldHedgeIoPool().execute(instanceId, () -> {
-                // 使用新的快照更新接口
-                strategyContext.getHedgeStrategyInstanceService().updateStrategyInstanceSnapshot(entity);
-            });
-        } else {
-            strategyContext.getHedgeStrategyInstanceService().updateStrategyInstanceSnapshot(entity);
-        }
+        strategyContext.getHedgeStrategyInstanceService().;
 
         // 3. 异步延时执行彻底停机逻辑（自旋等待撤单回执）
         new Thread(() -> {
@@ -483,7 +477,7 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
      */
     private void pushStrategyMonitorInfo() {
         try {
-            HedgePositionSummary positionSummary = getClientPosition();
+            HedgePositionSummary positionSummary = getHedgePositionSummary();
             PloyPrices ployPrice;
             // 直接读取当前生效的 timeSlice，避免触发撤单、停机等包含副作用的方法
             SymbolTimeSlice activeSymbolSlice = this.activeTimeSlice;
