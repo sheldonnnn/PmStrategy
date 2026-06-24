@@ -1,5 +1,6 @@
 package com.cmbc.strategy.engine.hedge.instance;
 
+import com.cmbc.mds.forex.quotes.dto.PloyPrices;
 import com.cmbc.oms.constant.BaseConstants;
 import com.cmbc.oms.controller.dto.StrategyOrder;
 import com.cmbc.oms.domain.exposure.dto.HedgePositionSummary;
@@ -8,16 +9,15 @@ import com.cmbc.oms.domain.order.model.NewOrder;
 import com.cmbc.strategy.constant.*;
 import com.cmbc.strategy.domain.dto.ClientMemberInfo;
 import com.cmbc.strategy.domain.entity.HedgeStrategyInstanceEntity;
-import com.cmbc.strategy.domain.model.StrategyStatSummary;
+import com.cmbc.strategy.domain.model.config.StrategyStatSummary;
 import com.cmbc.strategy.domain.model.hedge.GoldStrategyBean;
-import com.cmbc.strategy.domain.model.market.PloyPrices;
 import com.cmbc.strategy.domain.model.market.SubscribeRequest;
 import com.cmbc.strategy.domain.model.config.HedgeStrategyConfig;
 import com.cmbc.strategy.domain.model.config.SymbolTimeSlice;
 import com.cmbc.strategy.engine.context.StrategyContext;
 import com.cmbc.strategy.engine.core.timer.StrategyEvent;
 import com.cmbc.strategy.engine.hedge.event.HedgeTimeSliceEvent;
-import com.cmbc.strategy.engine.core.engine.BaseStrategy;
+import com.cmbc.strategy.engine.core.BaseStrategy;
 import com.cmbc.strategy.engine.hedge.trigger.HedgeTrigger;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.CollectionUtils;
@@ -130,12 +130,8 @@ public class HedgeStrategyInstance extends BaseStrategy<HedgeStrategyConfig> imp
             if (summary.getCumQty() != null) {
                 cumQty = cumQty.add(summary.getCumQty());
             }
-            if (summary.getCumAmount() != null) {
-                cumAmount = cumAmount.add(summary.getCumAmount());
-            }
         }
         entity.setCumQty(cumQty);
-        entity.setCumAmount(cumAmount);
 
         if (strategyContext.getGoldHedgeIoPool() != null) {
             strategyContext.getGoldHedgeIoPool().execute(instanceId, () -> {
